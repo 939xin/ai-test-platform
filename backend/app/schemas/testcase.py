@@ -9,7 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TestCaseCreate(BaseModel):
-    project_id: int
+    # project_id 由路径参数 /api/projects/{id}/cases 提供，body 里不再要求，
+    # 否则前端不传就会 422。
     name: str = Field(..., min_length=1, max_length=128)
     type: str = Field("api", pattern="^(api|web)$", description="api / web")
     priority: str = Field("P1", max_length=8)

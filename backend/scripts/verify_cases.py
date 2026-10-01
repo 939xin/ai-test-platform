@@ -30,7 +30,7 @@ def main() -> int:
     print(f"  使用项目 id={pid} 「{projects[0]['name']}」")
 
     payload = {
-        "project_id": pid,
+        # 刻意不传 project_id —— 前端也不传，这样自检才能覆盖真实的调用方式
         "name": "GET /get 连通性验证",
         "type": "api",
         "priority": "P0",
