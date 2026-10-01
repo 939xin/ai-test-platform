@@ -7,6 +7,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## ⛔ 强制约束：磁盘路径
+
+**所有开发文件、生成数据、缓存路径优先使用 E 盘（`E:\项目...`），禁止在 C 盘生成临时大文件。**
+
+适用范围包括但不限于：Python 虚拟环境与 pip 缓存、Node 依赖与 npm 缓存、
+数据库数据文件与 Docker 数据卷、构建产物、测试报告、截图、日志。
+
+落地方式：
+
+- 本项目所有路径一律落在 `E:\项目\接口测试工具\` 下
+- 新增缓存类工具时显式指定缓存目录到 E 盘，例如：
+  - `PIP_CACHE_DIR=E:\项目\接口测试工具\.cache\pip`
+  - `npm config set cache "E:\项目\接口测试工具\.cache\npm" --location=project`
+- ⚠️ Docker 数据卷默认落在 C 盘（Docker Desktop 的 WSL 虚拟磁盘）。
+  如需彻底满足本约束，要在 Docker Desktop → Settings → Resources 里
+  把 Disk image location 改到 E 盘。
+
+---
+
 ## 当前工程结构（重要）
 
 本仓库现在包含**两套代码**：
