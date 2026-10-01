@@ -1,0 +1,45 @@
+/*
+ * 设计令牌 — 工业实用主义
+ *
+ * 这是一个测试平台，形态是「工程仪表盘」：长时间盯屏、数据密集、状态驱动。
+ * 因此配色是功能性的信号色系统，而不是装饰性的彩色。
+ */
+:root {
+  /* ---------- 品牌色：深青蓝（仪器面板感，刻意避开 Element Plus 默认蓝）---------- */
+  --brand-900: #0e3a45;
+  --brand-700: #16697a;
+  --brand-500: #1e8a9e;
+  --brand-300: #6fb8c7;
+  --brand-100: #e3f2f5;
+
+  /* ---------- 信号色：测试结果三态，平台的身份特征 ---------- */
+  --signal-pass: #2e9e6b;
+  --signal-pass-bg: #e8f6ef;
+  --signal-fail: #d64545;
+  --signal-fail-bg: #fcedee;
+  --signal-warn: #d98c1f;
+  --signal-warn-bg: #fdf4e6;
+  --signal-skip: #7a8b94;
+  --signal-skip-bg: #eff2f4;
+
+  /* ---------- 中性色：冷灰，不用纯白，减少长时间阅读的刺眼感 ---------- */
+  --bg-app: #f5f7f8;
+  --bg-surface: #ffffff;
+  --bg-sider: #12232b;
+  --bg-sider-hover: #1b3038;
+  --bg-sider-active: #16697a;
+  --border: #e2e8ea;
+  --border-strong: #cfd8db;
+  --text-1: #1a2b32;
+  --text-2: #4a5c64;
+  --text-3: #8a9ba3;
+
+  /* ---------- 字体：中文走系统栈，数据一律等宽 ---------- */
+  --font-ui: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
+
+  /* ---------- 尺度：小圆角，工业感 ---------- */
+  --radius: 3px;
+  --sider-width: 208px;
+  --header-height: 52px;
+}

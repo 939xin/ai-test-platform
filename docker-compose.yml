@@ -1,0 +1,29 @@
+# 目录名是中文，Docker Compose 推导不出 project name，必须显式指定
+name: test-platform
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: test-platform-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-test123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-test_platform}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      # 本机已装 MySQL 占用 3306，这里映射到 3307 避免冲突
+      - "${MYSQL_PORT:-3307}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-test123456}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mysql_data:
