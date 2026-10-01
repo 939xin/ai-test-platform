@@ -5,6 +5,7 @@ import { Plus, Search } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import CaseEditorDrawer from '@/components/CaseEditorDrawer.vue'
+import RunCaseDialog from '@/components/RunCaseDialog.vue'
 import { listProjects } from '@/api/project'
 import { deleteCase, listCases } from '@/api/case'
 
@@ -17,6 +18,9 @@ const filters = reactive({ type: '', priority: '', keyword: '' })
 
 const drawerVisible = ref(false)
 const editingCaseId = ref(null)
+
+const runVisible = ref(false)
+const runningCase = ref(null)
 
 // 请求方法用颜色区分，扫一眼就能看出用例构成
 const METHOD_COLORS = {
@@ -76,6 +80,11 @@ function openCreate() {
 function openEdit(row) {
   editingCaseId.value = row.id
   drawerVisible.value = true
+}
+
+function openRun(row) {
+  runningCase.value = row
+  runVisible.value = true
 }
 
 async function remove(row) {
@@ -162,8 +171,9 @@ onMounted(async () => {
             <span class="mono">{{ formatTime(row.updated_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="130" align="right">
+        <el-table-column label="操作" width="176" align="right">
           <template #default="{ row }">
+            <el-button link type="success" @click="openRun(row)">执行</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="danger" @click="remove(row)">删除</el-button>
           </template>
@@ -179,6 +189,13 @@ onMounted(async () => {
       :case-id="editingCaseId"
       :project-id="currentProjectId"
       @saved="loadCases"
+    />
+
+    <RunCaseDialog
+      v-model="runVisible"
+      :case-row="runningCase"
+      :project-id="currentProjectId"
+      @executed="loadCases"
     />
   </div>
 </template>

@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
-from app.api import auth, cases, environments, health, projects
+from app.api import auth, cases, environments, executions, health, projects
 from app.config import settings
 
 
@@ -48,3 +48,4 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(environments.router, prefix="/api", tags=["environments"])
 app.include_router(cases.router, prefix="/api", tags=["cases"])
+app.include_router(executions.router, prefix="/api", tags=["executions"])
