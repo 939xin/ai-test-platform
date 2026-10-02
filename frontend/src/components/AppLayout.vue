@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Calendar, Connection, DataAnalysis, Document, Folder, MagicStick,
-  Setting, Tools, VideoPlay, Warning,
+  Monitor, Setting, Tools, VideoPlay, Warning,
 } from '@element-plus/icons-vue'
 
 import { fetchHealth } from '@/api/health'
@@ -13,7 +13,8 @@ const route = useRoute()
 // 侧栏导航 —— 与 router/index.js 的 name 一一对应
 const navItems = [
   { name: 'projects', title: '项目管理', icon: Folder },
-  { name: 'cases', title: '用例管理', icon: Document },
+  { name: 'api-cases', title: '接口测试', icon: Document },
+  { name: 'web-cases', title: 'UI 测试', icon: Monitor },
   { name: 'scenarios', title: '场景测试', icon: Connection },
   { name: 'plans', title: '测试计划', icon: Calendar },
   { name: 'executions', title: '执行中心', icon: VideoPlay },
@@ -25,6 +26,15 @@ const navItems = [
 ]
 
 const pageTitle = computed(() => route.meta?.title || '')
+const parentTitle = computed(() => route.meta?.parent || '')
+
+// 编辑页（/cases/api/new 等）不是列表页的子路由，靠 router-link-active 判不出高亮，
+// 所以按路径前缀自己算，避免侧栏在编辑页整片熄灭。
+const activeNav = computed(() => {
+  if (route.path.startsWith('/cases/api')) return 'api-cases'
+  if (route.path.startsWith('/cases/web')) return 'web-cases'
+  return route.name
+})
 
 // 后端连通状态：工程工具就该随时显示系统状态
 const health = ref({ state: 'checking', text: '检查中…' })
@@ -49,8 +59,8 @@ onMounted(checkHealth)
   <div class="app-shell">
     <aside class="sider">
       <div class="brand">
-        <span class="brand-mark">AT</span>
-        <span class="brand-text">AI 测试平台</span>
+        <span class="brand-mark">鑫</span>
+        <span class="brand-text">鑫测试平台</span>
       </div>
 
       <nav class="nav">
@@ -59,6 +69,7 @@ onMounted(checkHealth)
           :key="item.name"
           :to="{ name: item.name }"
           class="nav-item"
+          :class="{ 'nav-active': item.name === activeNav }"
         >
           <el-icon :size="15"><component :is="item.icon" /></el-icon>
           <span>{{ item.title }}</span>
@@ -75,10 +86,13 @@ onMounted(checkHealth)
 
     <div class="main">
       <header class="topbar">
-        <div class="topbar-title">{{ pageTitle }}</div>
+        <el-breadcrumb separator="/" class="crumb">
+          <el-breadcrumb-item :to="{ name: 'projects' }">鑫测试平台</el-breadcrumb-item>
+          <el-breadcrumb-item v-if="parentTitle">{{ parentTitle }}</el-breadcrumb-item>
+          <el-breadcrumb-item>{{ pageTitle }}</el-breadcrumb-item>
+        </el-breadcrumb>
         <div class="topbar-right">
-          <span class="topbar-hint">AI 辅助软件测试平台</span>
-          <el-avatar :size="28" class="avatar">A</el-avatar>
+          <el-avatar :size="28" class="avatar">鑫</el-avatar>
         </div>
       </header>
 
@@ -127,10 +141,8 @@ onMounted(checkHealth)
   border-radius: var(--radius);
   background: var(--brand-700);
   color: #fff;
-  font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.5px;
 }
 
 .brand-text {
@@ -166,7 +178,8 @@ onMounted(checkHealth)
   color: #e8eef0;
 }
 
-.nav-item.router-link-active {
+.nav-item.router-link-active,
+.nav-item.nav-active {
   background: var(--bg-sider-hover);
   color: #fff;
   border-left-color: var(--brand-500);
@@ -229,8 +242,13 @@ onMounted(checkHealth)
   border-bottom: 1px solid var(--border);
 }
 
-.topbar-title {
-  font-size: 15px;
+.crumb :deep(.el-breadcrumb__inner) {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.crumb :deep(.el-breadcrumb__item:last-child .el-breadcrumb__inner) {
   font-weight: 600;
   color: var(--text-1);
 }
@@ -241,14 +259,8 @@ onMounted(checkHealth)
   gap: 14px;
 }
 
-.topbar-hint {
-  font-size: 12px;
-  color: var(--text-3);
-}
-
 .avatar {
   background: var(--brand-700);
-  font-family: var(--font-mono);
   font-size: 13px;
 }
 

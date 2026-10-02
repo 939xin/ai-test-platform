@@ -39,7 +39,9 @@ async function loadCases() {
     cases.value = []
     return
   }
-  cases.value = await listCases(props.projectId)
+  // 只列接口用例：场景串联执行的是 api_executor，Web 用例放进来跑不通。
+  // 之前混着列出来，选中之后执行必然失败。
+  cases.value = await listCases(props.projectId, { type: 'api' })
 }
 
 async function load() {
