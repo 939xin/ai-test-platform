@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 
-import StatusTag from '@/components/StatusTag.vue'
+import ExecutionResult from '@/components/ExecutionResult.vue'
 import { listEnvironments } from '@/api/environment'
 import { runCase } from '@/api/execution'
 
@@ -39,15 +39,6 @@ async function run() {
   }
 }
 
-function prettyJson(value) {
-  if (value == null || value === '') return '—'
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
 watch(visible, (open) => {
   if (open) {
     result.value = null
@@ -74,51 +65,7 @@ watch(visible, (open) => {
     <el-empty v-if="!result && !running" description="选择环境后点击「开始执行」" :image-size="80" />
     <div v-if="running" class="running-hint">正在请求接口…</div>
 
-    <div v-if="result" class="result">
-      <div class="result-summary">
-        <StatusTag :status="result.status" />
-        <span class="mono summary-item">耗时 {{ result.duration_ms }} ms</span>
-        <span v-if="result.result_json?.error_msg" class="mono error">
-          {{ result.result_json.error_msg }}
-        </span>
-      </div>
-
-      <el-tabs>
-        <el-tab-pane label="请求">
-          <div class="mono block">{{ result.result_json?.request?.method }} {{ result.result_json?.request?.url }}</div>
-          <div class="label">请求头</div>
-          <pre class="mono pre">{{ prettyJson(result.result_json?.request?.headers) }}</pre>
-          <template v-if="result.result_json?.request?.body">
-            <div class="label">请求体</div>
-            <pre class="mono pre">{{ result.result_json.request.body }}</pre>
-          </template>
-        </el-tab-pane>
-
-        <el-tab-pane label="响应">
-          <div class="label">状态码</div>
-          <div class="mono block">{{ result.result_json?.response?.status }}</div>
-          <div class="label">响应体</div>
-          <pre class="mono pre tall">{{ prettyJson(result.result_json?.response?.body) }}</pre>
-        </el-tab-pane>
-
-        <el-tab-pane :label="`断言 (${result.result_json?.assertions?.length || 0})`">
-          <div
-            v-for="(a, i) in result.result_json?.assertions || []"
-            :key="i"
-            class="assert-item"
-            :class="a.passed ? 'is-pass' : 'is-fail'"
-          >
-            <span class="assert-mark">{{ a.passed ? '✓' : '✗' }}</span>
-            <span class="mono assert-text">{{ a.message }}</span>
-          </div>
-          <el-empty
-            v-if="!result.result_json?.assertions?.length"
-            description="该用例没有断言条件"
-            :image-size="60"
-          />
-        </el-tab-pane>
-      </el-tabs>
-    </div>
+    <ExecutionResult v-if="result" :execution="result" />
   </el-dialog>
 </template>
 
@@ -163,79 +110,5 @@ watch(visible, (open) => {
   padding: 30px 0;
   text-align: center;
   color: var(--text-3);
-}
-
-.result-summary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.summary-item {
-  font-size: 13px;
-  color: var(--text-2);
-}
-
-.error {
-  font-size: 12px;
-  color: var(--signal-fail);
-}
-
-.label {
-  margin: 10px 0 4px;
-  font-size: 12px;
-  color: var(--text-3);
-}
-
-.block {
-  font-size: 13px;
-  color: var(--text-1);
-  word-break: break-all;
-}
-
-.pre {
-  margin: 0;
-  padding: 10px;
-  max-height: 200px;
-  overflow: auto;
-  font-size: 12.5px;
-  line-height: 1.55;
-  background: #f7f9fa;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.pre.tall {
-  max-height: 300px;
-}
-
-.assert-item {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 7px 10px;
-  margin-bottom: 6px;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
-  font-size: 12.5px;
-}
-
-.assert-item.is-pass {
-  background: var(--signal-pass-bg);
-  border-color: #bfe3d1;
-  color: #1f6d4a;
-}
-
-.assert-item.is-fail {
-  background: var(--signal-fail-bg);
-  border-color: #f0c2c2;
-  color: #a12f2f;
-}
-
-.assert-mark {
-  font-weight: 700;
 }
 </style>

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.cases import get_case_or_404
 from app.api.environments import get_environment_or_404
 from app.database import get_db
-from app.models import Execution
+from app.models import Execution, TestCase
 from app.schemas.execution import ExecutionBrief, ExecutionOut, RunCaseRequest
 from app.services.api_executor import execute_case
 
@@ -39,6 +39,13 @@ def _env_to_dict(env) -> dict:
         "base_url": env.base_url,
         "variables_json": env.variables_json or {},
     }
+
+
+def _case_names(db: Session, case_ids: set[int]) -> dict[int, str]:
+    """一次查出 id → 用例名，避免逐行回查（列表和详情共用）。"""
+    if not case_ids:
+        return {}
+    return dict(db.execute(select(TestCase.id, TestCase.name).where(TestCase.id.in_(case_ids))).all())
 
 
 @router.post(
@@ -85,6 +92,7 @@ def run_case(
 def list_executions(
     project_id: int | None = Query(None),
     case_id: int | None = Query(None),
+    status: str | None = Query(None, description="按执行状态筛选：pass / fail / error / running"),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
@@ -93,7 +101,24 @@ def list_executions(
         stmt = stmt.where(Execution.project_id == project_id)
     if case_id is not None:
         stmt = stmt.where(Execution.case_id == case_id)
-    return db.execute(stmt.order_by(Execution.id.desc()).limit(limit)).scalars().all()
+    if status:
+        stmt = stmt.where(Execution.status == status)
+    rows = db.execute(stmt.order_by(Execution.id.desc()).limit(limit)).scalars().all()
+
+    name_map = _case_names(db, {row.case_id for row in rows if row.case_id is not None})
+
+    return [
+        ExecutionBrief(
+            id=row.id,
+            project_id=row.project_id,
+            case_id=row.case_id,
+            case_name=name_map.get(row.case_id),
+            status=row.status,
+            duration_ms=row.duration_ms,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/executions/{execution_id}", response_model=ExecutionOut, summary="执行详情")
@@ -103,4 +128,18 @@ def get_execution(execution_id: int, db: Session = Depends(get_db)):
         from fastapi import HTTPException
 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="执行记录不存在")
-    return execution
+
+    name_map = _case_names(db, {execution.case_id} if execution.case_id else set())
+    return ExecutionOut(
+        id=execution.id,
+        project_id=execution.project_id,
+        plan_id=execution.plan_id,
+        case_id=execution.case_id,
+        case_name=name_map.get(execution.case_id),
+        status=execution.status,
+        start_time=execution.start_time,
+        end_time=execution.end_time,
+        duration_ms=execution.duration_ms,
+        result_json=execution.result_json or {},
+        created_at=execution.created_at,
+    )

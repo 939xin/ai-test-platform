@@ -20,6 +20,7 @@ class ExecutionOut(BaseModel):
     project_id: int
     plan_id: int | None
     case_id: int | None
+    case_name: str | None = None
     status: str
     start_time: datetime | None
     end_time: datetime | None
@@ -29,13 +30,18 @@ class ExecutionOut(BaseModel):
 
 
 class ExecutionBrief(BaseModel):
-    """执行历史列表用的精简结构。"""
+    """执行历史列表用的精简结构。
+
+    case_name 由列表接口按 case_id 回查用例名填充 —— 用例被删时 case_id 置 NULL、
+    名称也随之为 None，前端显示「已删除用例」。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     project_id: int
     case_id: int | None
+    case_name: str | None = None
     status: str
     duration_ms: int
     created_at: datetime

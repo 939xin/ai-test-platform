@@ -153,6 +153,21 @@ def main() -> int:
 
     r = requests.get(f"{BASE}/executions", params={"project_id": pid}, timeout=10)
     check("执行历史可查", r.status_code == 200 and any(e["id"] == execution_id for e in r.json()))
+    row = next((e for e in r.json() if e["id"] == execution_id), {})
+    check("历史列表带用例名", row.get("case_name") == "GET /get 验收用例", row.get("case_name"))
+
+    r = requests.get(f"{BASE}/executions", params={"project_id": pid, "status": "pass"}, timeout=10)
+    check("按状态筛选执行记录",
+          r.status_code == 200 and any(e["id"] == execution_id for e in r.json()))
+    r = requests.get(f"{BASE}/executions", params={"project_id": pid, "status": "fail"}, timeout=10)
+    check("状态筛选排除不匹配记录",
+          r.status_code == 200 and all(e["status"] == "fail" for e in r.json()))
+
+    r = requests.get(f"{BASE}/executions/{execution_id}", timeout=10)
+    check("执行详情带用例名与结果",
+          r.status_code == 200
+          and r.json().get("case_name") == "GET /get 验收用例"
+          and r.json()["result_json"]["response"]["status"] == 200)
 
     # ==================== 清理 ====================
     section("清理验收数据")
