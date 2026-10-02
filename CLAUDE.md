@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 说明 | 状态 |
 |---|---|---|
-| `backend/` + `frontend/` | **新** AI 辅助软件测试平台（FastAPI + Vue3 + MySQL） | 开发中（7 天 MVP） |
+| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–6） |
 | `app/` + `main.py` 等 | **旧** PySide6 桌面版 | 冻结，作为引擎复用源 |
 
 新工程的执行引擎（`backend/app/services/`）大量复用旧桌面版 `app/engine`、`app/utils`
@@ -63,12 +63,26 @@ frontend (Vue3 + Element Plus, 5173)
     │  axios  /api/*  →  vite proxy
 backend  (FastAPI, 8000)
     ├── api/        路由
-    ├── models/     SQLAlchemy ORM（10 张表）
+    ├── models/     SQLAlchemy ORM（11 张表）
+    ├── schemas/    Pydantic 请求 / 响应模型
     └── services/   ★ 执行引擎，复用自旧桌面版
                     assertion_engine / variable_resolver / api_executor
+                    web_executor（31 种 Web 操作）/ scenario_runner / report_generator
     │  SQLAlchemy
 MySQL 8 (Docker, 3307)
 ```
+
+### 用例的两条独立线路（Day 6 起）
+
+「接口测试」与「UI 测试」是**两条独立线路**：各有自己的菜单、列表页与全屏编辑页。
+
+- 路由：`/cases/api`、`/cases/web`，编辑页共用 `views/CaseEditor.vue`，
+  由路由 `meta.caseType` 决定渲染哪半部分（类型专属表单拆到
+  `components/ApiCaseForm.vue` / `WebCaseForm.vue`）
+- 编辑页**没有类型下拉** —— 从哪个菜单进来就是哪种类型；保存后回所属列表
+- 项目 id 走 query 传递（`?project=29`），刷新不丢
+- Web 步骤的**操作与字段规格定义在后端** `services/web_executor.py` 的 `ACTION_SPEC`，
+  `/api/web/status` 下发，前端照着渲染。**新增操作只改后端规格即可，不要在前端硬编码字段判断**
 
 ### 前端规范（用户明确要求，必须遵守）
 
@@ -282,12 +296,23 @@ UI 层 (PySide6)          用户操作 → 写 DB
 
 ## 已知问题清单
 
-> 按优先级排列，修一个划一个。
+> 按优先级排列，修一个划一个。详细背景见 `dev_logs/` 与 `time/CHANGELOG.md`。
 
-1. ⚠️ settings_page.py — Web 用例创建时未保存 environment_id
-2. ⚠️ web_runner.py — 执行结果保存逻辑需完善（报告路径关联 result_id）
-3. ⚠️ web_test_page.py — 启动 URL 未写入 web_test_cases.start_url
-4. 📝 应用完整启动验证（模拟 GUI 初始化）
-5. 📝 端到端测试：接口用例创建→执行→报告
-6. 📝 端到端测试：Web 用例创建→步骤编排→执行
-7. 📝 PyInstaller 打包测试
+### 新平台（当前在做）
+
+1. ⚠️ **全站接口未校验 JWT** —— 登录能签发、前端也带上了，但后端没有一处 `Depends`。
+2. 📝 **三个占位页没做** —— 缺陷管理 / AI 助手 / 设置（各 11 行），
+   且文案还写着「Day 4/5/6 实现」这类过时的日期承诺。
+3. 📝 **列表没有分页** —— 接口一次性返回全部；要加得动后端（limit/offset + total）。
+4. 📝 **Web 用例不支持场景串联 / 数据驱动** —— 这两条链路只走接口执行器。
+5. 📝 **窄视口表格横向溢出** —— 操作列已 `fixed="right"` 保证可点，整体仍需横向滚动。
+
+### 已完成，别当待办
+
+Web UI 执行已迁移（Day 4）、`_capture_screenshot()` 老 bug 已修（Day 4）、
+测试计划已实现（Day 5）、场景混入 Web 用例已修（Day 6）。
+
+### 旧桌面版（已冻结）
+
+GUI 相关的历史问题随 UI 弃用而失效，不再跟踪（含 settings_page 未存 environment_id、
+web_test_page 的 start_url、PyInstaller 打包测试等）。
