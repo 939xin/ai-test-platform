@@ -134,6 +134,39 @@ WEB_CASES = [
         ],
     },
     {
+        # 演示几类「旧版做不了」的操作，都是原生 click 覆盖不到的场景
+        "name": "Web·新增操作演示（下拉框 / 悬停 / 按键 / 计数）",
+        "type": "web",
+        "priority": "P2",
+        "tags": "演示,Web",
+        "steps_json": [
+            {"step_order": 1, "action_type": "open_url", "input_value": DEMO_URL},
+            # 原生 select 用 click 点不开选项，必须走「下拉框选择」
+            {"step_order": 2, "action_type": "select_option", "input_value": "label",
+             "input_value2": "上海",
+             "locator_type": "id", "locator_value": "city-select"},
+            {"step_order": 3, "action_type": "force_wait", "wait_seconds": 0.4},
+            {"step_order": 4, "action_type": "assert_text_contains", "input_value": "已选：sh",
+             "locator_type": "id", "locator_value": "city-echo"},
+            # 只有鼠标移上去才出现的菜单
+            {"step_order": 5, "action_type": "hover",
+             "locator_type": "id", "locator_value": "hover-box"},
+            {"step_order": 6, "action_type": "assert_visible", "input_value": "true",
+             "locator_type": "id", "locator_value": "hover-menu"},
+            # 键盘按键：输入框里敲回车提交
+            {"step_order": 7, "action_type": "input", "input_value": "订单",
+             "locator_type": "id", "locator_value": "search-key"},
+            {"step_order": 8, "action_type": "press_key", "input_value": "ENTER"},
+            {"step_order": 9, "action_type": "force_wait", "wait_seconds": 0.4},
+            {"step_order": 10, "action_type": "assert_text_contains", "input_value": "已搜索：订单",
+             "locator_type": "id", "locator_value": "search-echo"},
+            # 列表条数校验
+            {"step_order": 11, "action_type": "assert_element_count", "input_value": "3",
+             "locator_type": "css_selector", "locator_value": "li.item"},
+            {"step_order": 12, "action_type": "screenshot", "input_value": "new-ops-demo"},
+        ],
+    },
+    {
         # 断言必然失败 —— 演示失败态，顺带展示「失败自动截图」
         "name": "Web·断言失败演示（预期失败）",
         "type": "web",

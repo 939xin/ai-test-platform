@@ -50,6 +50,7 @@ const datasetDialogVisible = ref(false)
 // 浏览器探测结果与枚举：{ available, error, actions, locators }
 const webInfo = ref(null)
 const webActions = computed(() => webInfo.value?.actions || [])
+const webActionGroups = computed(() => webInfo.value?.action_groups || [])
 const webLocators = computed(() => webInfo.value?.locators || [])
 
 const form = reactive({
@@ -148,7 +149,18 @@ async function load() {
       assertions: (data.assertions_json || []).map((a) => ({ ...a })),
       extracts: (data.extract_json || []).map((e) => ({ ...e })),
       data_file: data.data_file || '',
-      steps: (data.steps_json || []).map((s) => ({ ...s })),
+      // 老数据里没有新增的槽位字段，补上默认值，否则 v-model 绑到 undefined
+      steps: (data.steps_json || []).map((s) => ({
+        input_value: '',
+        input_value2: '',
+        wait_seconds: 0,
+        description: '',
+        locator_type: '',
+        locator_value: '',
+        target_locator_type: '',
+        target_locator_value: '',
+        ...s,
+      })),
     })
     if (isApi.value) await loadDatasets()
   } finally {
@@ -175,10 +187,13 @@ function normalizeStep(step, index) {
     enabled: step.enabled !== false,
     action_type: step.action_type,
     input_value: String(step.input_value ?? ''),
+    input_value2: String(step.input_value2 ?? ''),
     wait_seconds: Number(step.wait_seconds) || 0,
     description: String(step.description ?? ''),
     locator_type: String(step.locator_type ?? ''),
     locator_value: String(step.locator_value ?? ''),
+    target_locator_type: String(step.target_locator_type ?? ''),
+    target_locator_value: String(step.target_locator_value ?? ''),
   }
 }
 
@@ -296,6 +311,7 @@ onMounted(load)
           ref="webFormRef"
           :form="form"
           :actions="webActions"
+          :action-groups="webActionGroups"
           :locators="webLocators"
           :web-info="webInfo"
         />

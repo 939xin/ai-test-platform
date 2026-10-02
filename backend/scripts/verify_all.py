@@ -1,14 +1,15 @@
-"""一键验收 — 覆盖 Day 1 ~ Day 5 的全部后端能力。
+"""一键验收 — 覆盖 Day 1 ~ Day 6 的全部后端能力。
 
 用法（在 backend/ 目录下，需后端已启动）：
     venv/Scripts/python.exe scripts/verify_all.py
 
 每个开发阶段结束后跑一次，确认没有回归。
-Day 1-3 段需要外网（httpbin.org）；Day 4-5 段用后端自带的离线演示页，不依赖外网。
+Day 1-3 段需要外网（httpbin.org）；Day 4 起用后端自带的离线演示页，不依赖外网。
 """
 import io
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -20,8 +21,98 @@ import requests  # noqa: E402
 BASE = "http://127.0.0.1:8000/api"
 # Web 验收的靶页：后端静态托管的离线演示页（httpbin 没有 UI，测不了 Web）
 DEMO_URL = f"{BASE}/demo/index.html"
+SECOND_URL = f"{BASE}/demo/second.html"
 REPORT_ROOT = Path(__file__).resolve().parents[2] / "reports" / "platform"
 RESULTS: list[tuple[str, bool, str]] = []
+
+
+def new_ops_steps(upload_path: str) -> list[dict]:
+    """覆盖新增 16 种操作的一条 Web 用例的步骤表。
+
+    定义在模块级是为了能单独复跑排查（见 scripts/debug_new_ops.py）——
+    每次跑完整验收都要等前面 100 多项，出问题定位太慢。
+    """
+    return [
+        {"step_order": 1, "action_type": "open_url", "input_value": DEMO_URL},
+        # 下拉框选择（按可见文本）
+        {"step_order": 2, "action_type": "select_option", "input_value": "label",
+         "input_value2": "上海", "locator_type": "id", "locator_value": "city-select"},
+        {"step_order": 3, "action_type": "force_wait", "wait_seconds": 0.4},
+        {"step_order": 4, "action_type": "assert_text_contains", "input_value": "已选：sh",
+         "locator_type": "id", "locator_value": "city-echo"},
+        # 键盘按键：先输入，再回车提交
+        {"step_order": 5, "action_type": "input", "input_value": "关键字",
+         "locator_type": "id", "locator_value": "search-key"},
+        {"step_order": 6, "action_type": "press_key", "input_value": "ENTER"},
+        {"step_order": 7, "action_type": "force_wait", "wait_seconds": 0.4},
+        {"step_order": 8, "action_type": "assert_text_contains", "input_value": "已搜索：关键字",
+         "locator_type": "id", "locator_value": "search-echo"},
+        # 上传文件
+        {"step_order": 9, "action_type": "upload_file", "input_value": upload_path,
+         "locator_type": "id", "locator_value": "upload"},
+        {"step_order": 10, "action_type": "assert_text_contains", "input_value": "verify_upload.txt",
+         "locator_type": "id", "locator_value": "upload-echo"},
+        # 悬停
+        {"step_order": 11, "action_type": "hover", "locator_type": "id", "locator_value": "hover-box"},
+        {"step_order": 12, "action_type": "assert_visible", "input_value": "true",
+         "locator_type": "id", "locator_value": "hover-menu"},
+        # 双击 / 右键
+        {"step_order": 13, "action_type": "double_click", "locator_type": "id",
+         "locator_value": "dbl-box"},
+        {"step_order": 14, "action_type": "force_wait", "wait_seconds": 0.4},
+        {"step_order": 15, "action_type": "assert_text_contains", "input_value": "已双击",
+         "locator_type": "id", "locator_value": "dbl-box"},
+        {"step_order": 16, "action_type": "context_click", "locator_type": "id",
+         "locator_value": "ctx-box"},
+        {"step_order": 17, "action_type": "force_wait", "wait_seconds": 0.4},
+        {"step_order": 18, "action_type": "assert_text_contains", "input_value": "已右键",
+         "locator_type": "id", "locator_value": "ctx-box"},
+        # 拖拽
+        {"step_order": 19, "action_type": "drag_and_drop",
+         "locator_type": "id", "locator_value": "drag-src",
+         "target_locator_type": "id", "target_locator_value": "drop-target"},
+        {"step_order": 20, "action_type": "force_wait", "wait_seconds": 0.4},
+        {"step_order": 21, "action_type": "assert_text_contains", "input_value": "已放置",
+         "locator_type": "id", "locator_value": "drop-target"},
+        # 断言元素数量 / 属性
+        {"step_order": 22, "action_type": "assert_element_count", "input_value": "3",
+         "locator_type": "css_selector", "locator_value": "li.item"},
+        {"step_order": 23, "action_type": "assert_attribute", "input_value": "placeholder",
+         "input_value2": "占位文本",
+         "locator_type": "id", "locator_value": "attr-field"},
+        {"step_order": 24, "action_type": "assert_attribute", "input_value": "disabled",
+         "locator_type": "id", "locator_value": "attr-field"},
+        # 弹窗：alert 确认 + prompt 取消
+        {"step_order": 25, "action_type": "click", "locator_type": "id", "locator_value": "alert-btn"},
+        {"step_order": 26, "action_type": "alert_accept"},
+        {"step_order": 27, "action_type": "force_wait", "wait_seconds": 0.4},
+        {"step_order": 28, "action_type": "assert_text_contains", "input_value": "alert 已关闭",
+         "locator_type": "id", "locator_value": "dialog-echo"},
+        {"step_order": 29, "action_type": "click", "locator_type": "id", "locator_value": "prompt-btn"},
+        {"step_order": 30, "action_type": "alert_dismiss"},
+        {"step_order": 31, "action_type": "force_wait", "wait_seconds": 0.4},
+        {"step_order": 32, "action_type": "assert_text_contains", "input_value": "prompt 已取消",
+         "locator_type": "id", "locator_value": "dialog-echo"},
+        # 等待元素消失
+        {"step_order": 33, "action_type": "click", "locator_type": "id", "locator_value": "remove-btn"},
+        {"step_order": 34, "action_type": "wait_invisible", "wait_seconds": 5,
+         "locator_type": "id", "locator_value": "loading-box"},
+        # 滚动到页面底部
+        {"step_order": 35, "action_type": "scroll_to_bottom"},
+        {"step_order": 36, "action_type": "force_wait", "wait_seconds": 0.5},
+        {"step_order": 37, "action_type": "assert_text_contains", "input_value": "已到达底部",
+         "locator_type": "id", "locator_value": "scroll-echo"},
+        # 刷新：前后各取一次页面加载标记，两次不同才说明真的重载了
+        {"step_order": 38, "action_type": "extract_variable", "input_value": "mark_before",
+         "locator_type": "id", "locator_value": "reload-mark"},
+        {"step_order": 39, "action_type": "refresh"},
+        {"step_order": 40, "action_type": "extract_variable", "input_value": "mark_after",
+         "locator_type": "id", "locator_value": "reload-mark"},
+        # 后退
+        {"step_order": 41, "action_type": "open_url", "input_value": SECOND_URL},
+        {"step_order": 42, "action_type": "back"},
+        {"step_order": 43, "action_type": "assert_url_contains", "input_value": "/demo/index.html"},
+    ]
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
@@ -570,6 +661,86 @@ def main() -> int:
                 html = requests.get(f"{BASE}/reports/{web_report_name}", timeout=10).text
                 check("Web 报告含步骤描述与截图",
                       "打开 URL" in html and "<img src=" in html and "screenshots/" in html)
+
+        # ---------- Day 6 · 新增的 16 种操作 ----------
+        # 一条用例跑完全部新操作，逐个操作单独断言 —— 哪个挂了能一眼看出是哪个。
+        upload_file = Path(tempfile.gettempdir()) / "verify_upload.txt"
+        upload_file.write_text("upload demo", encoding="utf-8")
+
+        new_ops_case = None
+        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+            "name": "Web-新增 16 种操作",
+            "type": "web",
+            "steps_json": new_ops_steps(str(upload_file)),
+        }, timeout=10)
+        check("新建 Web 用例（43 步，覆盖新增 16 种操作）", r.status_code == 201,
+              r.text[:200] if r.status_code != 201 else "")
+        new_ops_case = r.json().get("id") if r.status_code == 201 else None
+
+        if new_ops_case:
+            r = requests.post(f"{BASE}/cases/{new_ops_case}/run-web",
+                              json={"browser": "chrome", "headless": True, "timeout": 300},
+                              timeout=480)
+            check("执行新增操作用例", r.status_code == 200)
+            if r.status_code == 200:
+                ex = r.json()
+                web_execution_ids.append(ex["id"])
+                steps_by_order = {s["step_order"]: s for s in ex["result_json"]["steps"]}
+
+                def passed(*orders: int) -> bool:
+                    return all(steps_by_order.get(o, {}).get("status") == "pass" for o in orders)
+
+                def why(*orders: int) -> str:
+                    bad = [f'{o}:{steps_by_order.get(o, {}).get("message", "缺失")[:80]}'
+                           for o in orders if steps_by_order.get(o, {}).get("status") != "pass"]
+                    return " | ".join(bad)
+
+                check("下拉框选择生效", passed(4), why(4))
+                check("键盘按键（回车）生效", passed(8), why(8))
+                check("上传文件生效", passed(10), why(10))
+                check("鼠标悬停让菜单出现", passed(12), why(12))
+                check("双击生效", passed(15), why(15))
+                check("右键生效", passed(18), why(18))
+                check("拖拽生效", passed(21), why(21))
+                check("断言元素数量（3 个）通过", passed(22), why(22))
+                check("断言元素属性（值 + 仅存在）通过", passed(23, 24), why(23, 24))
+                check("弹窗确认（alert）后页面继续", passed(28), why(28))
+                check("弹窗取消（prompt）后页面继续", passed(32), why(32))
+                check("等待元素消失", passed(34), why(34))
+                check("滚动到页面底部", passed(37), why(37))
+                extracted = ex["result_json"]["extracted"]
+                check("刷新页面确实重载（加载标记变了）",
+                      bool(extracted.get("mark_before")) and extracted.get("mark_before") != extracted.get("mark_after"),
+                      f'{extracted.get("mark_before")} → {extracted.get("mark_after")}')
+                check("浏览器后退回到上一页", passed(43), why(43))
+                check("新增操作用例整体通过", ex["status"] == "pass",
+                      f'{ex["status"]} {ex["duration_ms"]}ms')
+
+        # 新字段的校验：规格里标了 required 的字段没填，应在写库前被 422 挡下
+        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+            "name": "Web-拖拽缺目标元素", "type": "web",
+            "steps_json": [{"step_order": 1, "action_type": "drag_and_drop",
+                            "locator_type": "id", "locator_value": "drag-src"}]}, timeout=10)
+        check("拖拽缺目标元素返回 422", r.status_code == 422, str(r.status_code))
+        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+            "name": "Web-下拉缺选项值", "type": "web",
+            "steps_json": [{"step_order": 1, "action_type": "select_option",
+                            "locator_type": "id", "locator_value": "city-select"}]}, timeout=10)
+        check("下拉框选择缺选项值返回 422", r.status_code == 422, str(r.status_code))
+
+        r = requests.get(f"{BASE}/web/status", timeout=15)
+        actions = {a["value"]: a for a in r.json().get("actions", [])}
+        check("操作枚举已扩到 31 种", len(actions) == 31, f"{len(actions)} 种")
+        check("每个操作都下发了字段规格",
+              all("fields" in a and "group" in a for a in actions.values()),
+              str([k for k, a in actions.items() if "fields" not in a]))
+        check("操作按分组下发",
+              bool(r.json().get("action_groups")),
+              str(r.json().get("action_groups")))
+        check("下拉框选择声明了选择方式与选项值",
+              [f["name"] for f in actions.get("select_option", {}).get("fields", [])]
+              == ["locator", "value", "value2"],
+              str(actions.get("select_option", {}).get("fields")))
 
     # ==================== Day 5 · 测试计划 ====================
     section("Day 5 · 测试计划 ★")

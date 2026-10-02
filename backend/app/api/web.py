@@ -7,7 +7,13 @@ from fastapi import APIRouter
 
 from app.config import settings
 from app.services.browser_manager import check_browser
-from app.services.web_executor import ACTION_LABELS, LOCATOR_ACTIONS, LOCATOR_LABELS, LOCATOR_MAP
+from app.services.web_executor import (
+    ACTION_GROUPS,
+    ACTION_SPEC,
+    LOCATOR_ACTIONS,
+    LOCATOR_LABELS,
+    LOCATOR_MAP,
+)
 
 router = APIRouter()
 
@@ -23,6 +29,9 @@ def web_status():
 
     actions / locators 顺带返回：操作与定位方式的定义在 services/web_executor.py，
     前端编辑器直接用它渲染下拉，不各自维护一份枚举（会漂移）。
+
+    每个 action 还带 group（下拉分组）与 fields（该操作需要哪些输入项）——
+    前端据此渲染表单，不再自己判断「这个操作要不要输入框」。
     """
     browsers = {}
     problems = []
@@ -37,11 +46,18 @@ def web_status():
         "browsers": browsers,
         "cache_dir": settings.driver_cache_dir,
         "error": "；".join(problems),
-        # needs_locator 让前端知道这个操作要不要显示「定位方式 / 定位值」两个输入框
         "actions": [
-            {"value": value, "label": label, "needs_locator": value in LOCATOR_ACTIONS}
-            for value, label in ACTION_LABELS.items()
+            {
+                "value": value,
+                "label": spec["label"],
+                "group": spec["group"],
+                "fields": spec["fields"],
+                # 保留 needs_locator：老前端与验收脚本仍在读它
+                "needs_locator": value in LOCATOR_ACTIONS,
+            }
+            for value, spec in ACTION_SPEC.items()
         ],
+        "action_groups": ACTION_GROUPS,
         "locators": [
             {"value": value, "label": LOCATOR_LABELS.get(value, value)}
             for value in LOCATOR_MAP

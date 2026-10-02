@@ -25,9 +25,11 @@ from selenium.common.exceptions import (
     TimeoutException,
     WebDriverException,
 )
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from app.config import settings
 from app.services.browser_manager import create_driver
@@ -61,30 +63,213 @@ LOCATOR_LABELS = {
     "partial_link_text": "部分链接文本",
 }
 
-# 需要元素定位的 10 种操作。其余 5 种（open_url / force_wait / switch_window /
-# execute_js / screenshot）不看定位信息。
-LOCATOR_ACTIONS = {
-    "click", "input", "clear", "smart_wait", "switch_iframe", "scroll_to",
-    "assert_text_contains", "assert_visible", "assert_exists", "extract_variable",
+# ---------- 操作规格：每个操作声明自己需要哪些字段 ----------
+#
+# 这份声明是前后端的唯一事实来源：/api/web/status 原样下发给前端渲染表单，
+# 前端不再自己判断「这个操作要不要输入框」。此前前端用 NO_INPUT_ACTIONS /
+# WAIT_ACTIONS 两个 Set 硬编码，与后端的 needs_locator 各管一摊 ——
+# 正是 Day 3 栽过三次的「前后端字段认知漂移」隐患。
+#
+# 字段槽位（name）与 WebStep 的字段一一对应：
+#   locator        → locator_type / locator_value
+#   target_locator → target_locator_type / target_locator_value
+#   value          → input_value
+#   value2         → input_value2
+#   wait           → wait_seconds
+F_LOCATOR = "locator"
+F_TEXT = "text"
+F_TEXTAREA = "textarea"
+F_SELECT = "select"
+F_NUMBER = "number"
+
+
+def _field(name, label, ftype=F_TEXT, **extra):
+    return {"name": name, "label": label, "type": ftype, **extra}
+
+
+LOCATOR_FIELD = _field("locator", "元素定位", F_LOCATOR, required=True)
+TARGET_LOCATOR_FIELD = _field("target_locator", "目标元素", F_LOCATOR, required=True)
+
+SELECT_BY_OPTIONS = [
+    {"value": "label", "label": "按可见文本"},
+    {"value": "value", "label": "按 value 属性"},
+    {"value": "index", "label": "按下标（从 0 起）"},
+]
+
+TRUE_FALSE_HINT = "true / false（留空按 true）"
+
+# 31 种操作，按 group 分组；dict 顺序即前端下拉顺序。
+ACTION_SPEC = {
+    # ---------- 导航 ----------
+    "open_url": {
+        "label": "打开 URL",
+        "group": "导航",
+        "fields": [_field("value", "网址", placeholder="完整 URL，可含 ${变量}，如 ${base_url}/login", required=True)],
+    },
+    "refresh": {"label": "刷新页面", "group": "导航", "fields": []},
+    "back": {"label": "浏览器后退", "group": "导航", "fields": []},
+    "switch_window": {
+        "label": "切换窗口",
+        "group": "导航",
+        "fields": [_field("value", "窗口", placeholder="窗口序号（从 0 开始）或标题关键字", required=True)],
+    },
+    "switch_iframe": {
+        "label": "切换 IFrame",
+        "group": "导航",
+        "fields": [
+            LOCATOR_FIELD,
+            _field("value", "退回主文档", placeholder="填 default 退回主文档；留空则按左侧定位切入"),
+        ],
+    },
+
+    # ---------- 鼠标 ----------
+    "click": {"label": "点击元素", "group": "鼠标", "fields": [LOCATOR_FIELD]},
+    "double_click": {"label": "双击元素", "group": "鼠标", "fields": [LOCATOR_FIELD]},
+    "context_click": {"label": "右键点击", "group": "鼠标", "fields": [LOCATOR_FIELD]},
+    "hover": {"label": "鼠标悬停", "group": "鼠标", "fields": [LOCATOR_FIELD]},
+    "drag_and_drop": {
+        "label": "拖拽元素",
+        "group": "鼠标",
+        "fields": [LOCATOR_FIELD, TARGET_LOCATOR_FIELD],
+    },
+
+    # ---------- 表单 ----------
+    "input": {
+        "label": "输入文本",
+        "group": "表单",
+        "fields": [LOCATOR_FIELD, _field("value", "输入值", placeholder="要输入的文本，可含 ${变量}")],
+    },
+    "clear": {"label": "清空输入", "group": "表单", "fields": [LOCATOR_FIELD]},
+    "select_option": {
+        "label": "下拉框选择",
+        "group": "表单",
+        "fields": [
+            LOCATOR_FIELD,
+            _field("value", "选择方式", F_SELECT, options=SELECT_BY_OPTIONS, default="label"),
+            _field("value2", "选项值", placeholder="要选中的文本 / value / 下标", required=True),
+        ],
+    },
+    "upload_file": {
+        "label": "上传文件",
+        "group": "表单",
+        "fields": [
+            LOCATOR_FIELD,
+            _field("value", "文件路径", placeholder="本机绝对路径，可含 ${变量}", required=True),
+        ],
+    },
+    "press_key": {
+        "label": "键盘按键",
+        "group": "表单",
+        "fields": [
+            _field("value", "按键", placeholder="ENTER / TAB / ESCAPE / BACKSPACE，发送到当前焦点元素", required=True),
+        ],
+    },
+
+    # ---------- 弹窗 ----------
+    "alert_accept": {"label": "弹窗确认", "group": "弹窗", "fields": []},
+    "alert_dismiss": {
+        "label": "弹窗取消",
+        "group": "弹窗",
+        "fields": [_field("value", "prompt 输入", placeholder="仅 prompt 弹窗需要，普通弹窗留空")],
+    },
+
+    # ---------- 等待 ----------
+    "force_wait": {"label": "强制等待", "group": "等待", "fields": [_field("wait", "等待秒数", F_NUMBER)]},
+    "smart_wait": {
+        "label": "智能等待",
+        "group": "等待",
+        "fields": [LOCATOR_FIELD, _field("wait", "超时秒数", F_NUMBER)],
+    },
+    "wait_invisible": {
+        "label": "等待元素消失",
+        "group": "等待",
+        "fields": [LOCATOR_FIELD, _field("wait", "超时秒数", F_NUMBER)],
+    },
+
+    # ---------- 滚动 ----------
+    "scroll_to": {"label": "滚动到元素", "group": "滚动", "fields": [LOCATOR_FIELD]},
+    "scroll_to_bottom": {"label": "滚动到页面底部", "group": "滚动", "fields": []},
+
+    # ---------- 断言 ----------
+    "assert_text_contains": {
+        "label": "断言-文本包含",
+        "group": "断言",
+        "fields": [LOCATOR_FIELD, _field("value", "期望文本", placeholder="期望包含的文本，可含 ${变量}", required=True)],
+    },
+    "assert_visible": {
+        "label": "断言-元素可见",
+        "group": "断言",
+        "fields": [LOCATOR_FIELD, _field("value", "期望可见", placeholder=TRUE_FALSE_HINT)],
+    },
+    "assert_exists": {
+        "label": "断言-元素存在",
+        "group": "断言",
+        "fields": [LOCATOR_FIELD, _field("value", "期望存在", placeholder=TRUE_FALSE_HINT)],
+    },
+    "assert_url_contains": {
+        "label": "断言-URL 包含",
+        "group": "断言",
+        "fields": [_field("value", "期望 URL 片段", placeholder="如 /dashboard", required=True)],
+    },
+    "assert_element_count": {
+        "label": "断言-元素数量",
+        "group": "断言",
+        "fields": [LOCATOR_FIELD, _field("value", "期望数量", placeholder="整数，如 3", required=True)],
+    },
+    "assert_attribute": {
+        "label": "断言-元素属性",
+        "group": "断言",
+        "fields": [
+            LOCATOR_FIELD,
+            _field("value", "属性名", placeholder="如 placeholder / disabled / class", required=True),
+            _field("value2", "期望值", placeholder="留空则只校验该属性存在"),
+        ],
+    },
+
+    # ---------- 其他 ----------
+    "execute_js": {
+        "label": "执行 JS",
+        "group": "其他",
+        "fields": [_field("value", "脚本", F_TEXTAREA, placeholder="要执行的 JS，如 window.scrollTo(0, 0);", required=True)],
+    },
+    "screenshot": {
+        "label": "截图",
+        "group": "其他",
+        "fields": [_field("value", "文件名", placeholder="截图文件名（可选）")],
+    },
+    "extract_variable": {
+        "label": "提取变量",
+        "group": "其他",
+        "fields": [
+            LOCATOR_FIELD,
+            _field("value", "变量名", placeholder="如 welcome_text", required=True),
+        ],
+    },
 }
 
-# 15 种操作的中文标签，抄自旧 _get_step_desc()
-ACTION_LABELS = {
-    "open_url": "打开 URL",
-    "click": "点击元素",
-    "input": "输入文本",
-    "clear": "清空输入",
-    "force_wait": "强制等待",
-    "smart_wait": "智能等待",
-    "switch_window": "切换窗口",
-    "switch_iframe": "切换 IFrame",
-    "scroll_to": "滚动到元素",
-    "execute_js": "执行 JS",
-    "screenshot": "截图",
-    "assert_text_contains": "断言-文本包含",
-    "assert_visible": "断言-元素可见",
-    "assert_exists": "断言-元素存在",
-    "extract_variable": "提取变量",
+# 标签与「需要定位的操作」从规格里派生，不再各写一份
+ACTION_LABELS = {key: spec["label"] for key, spec in ACTION_SPEC.items()}
+ACTION_GROUPS = list(dict.fromkeys(spec["group"] for spec in ACTION_SPEC.values()))
+LOCATOR_ACTIONS = {
+    key for key, spec in ACTION_SPEC.items()
+    if any(f["name"] == F_LOCATOR for f in spec["fields"])
+}
+
+# 键盘按键名 → Selenium Keys 的映射（大小写不敏感，未命中时按原字符串发送）
+_KEY_ALIASES = {
+    "ENTER": "ENTER", "RETURN": "ENTER",
+    "TAB": "TAB",
+    "ESCAPE": "ESCAPE", "ESC": "ESCAPE",
+    "BACKSPACE": "BACK_SPACE", "BACK_SPACE": "BACK_SPACE",
+    "DELETE": "DELETE",
+    "SPACE": "SPACE",
+    "UP": "ARROW_UP", "ARROW_UP": "ARROW_UP",
+    "DOWN": "ARROW_DOWN", "ARROW_DOWN": "ARROW_DOWN",
+    "LEFT": "ARROW_LEFT", "ARROW_LEFT": "ARROW_LEFT",
+    "RIGHT": "ARROW_RIGHT", "ARROW_RIGHT": "ARROW_RIGHT",
+    "PAGE_UP": "PAGE_UP", "PAGE_DOWN": "PAGE_DOWN",
+    "HOME": "HOME", "END": "END",
+    "F5": "F5",
 }
 
 DEFAULT_STEP_WAIT = 10        # 步骤没写 wait_seconds 时的元素等待秒数（沿用旧代码的 10）
@@ -94,6 +279,15 @@ MAX_CLICKS_RETRY = 2
 
 # 限制同时拉起的浏览器数量：前端连点多次时，不会一次开出一堆 Chrome
 _BROWSER_SEMAPHORE = threading.Semaphore(2)
+
+
+def _locator_text(step: dict, prefix: str = "") -> str:
+    """把一对定位信息渲染成 `[id: login-btn]`；prefix 传 "target_" 时取第二个元素。"""
+    locator_type = str(step.get(f"{prefix}locator_type") or "")
+    locator_value = str(step.get(f"{prefix}locator_value") or "")
+    if locator_type and locator_value:
+        return f"[{locator_type}: {locator_value[:40]}]"
+    return ""
 
 
 def _describe(step: dict) -> str:
@@ -106,11 +300,13 @@ def _describe(step: dict) -> str:
     label = ACTION_LABELS.get(action, action)
     detail = ""
 
-    if action in LOCATOR_ACTIONS:
-        locator_type = str(step.get("locator_type") or "")
-        locator_value = str(step.get("locator_value") or "")
-        if locator_type and locator_value:
-            detail += f" [{locator_type}: {locator_value[:40]}]"
+    main_locator = _locator_text(step)
+    if main_locator:
+        detail += f" {main_locator}"
+
+    target_locator = _locator_text(step, "target_")
+    if target_locator:
+        detail += f" → {target_locator}"
 
     raw = str(step.get("input_value") or "")
     if raw:
@@ -118,6 +314,10 @@ def _describe(step: dict) -> str:
             detail += f" → {raw[:60]}"
         else:
             detail += f" => '{raw[:30]}'"
+
+    second = str(step.get("input_value2") or "")
+    if second:
+        detail += f" / '{second[:30]}'"
 
     return f"{label}{detail}"
 
@@ -128,6 +328,17 @@ def _clamp_wait(seconds) -> float:
     except (TypeError, ValueError):
         value = 0.0
     return min(max(value, 0.0), float(MAX_WAIT_SECONDS))
+
+
+def _resolve_key(raw: str):
+    """把 'ENTER' / 'esc' 这类按键名翻成 Selenium Keys；单字符原样返回。"""
+    name = str(raw or "").strip()
+    if not name:
+        raise ValueError("键盘按键操作缺少按键名")
+    target = _KEY_ALIASES.get(name.upper())
+    if target:
+        return getattr(Keys, target)
+    return name
 
 
 class _StepRunner:
@@ -279,25 +490,53 @@ class _StepRunner:
         if shot:
             self._pending_shots.append(shot)
 
-    def _resolve_locator(self, step: dict, action: str, needs_locator: bool) -> tuple:
-        """解析定位信息。需要定位却缺失时直接报错 —— 这里是「假绿」bug 的封堵点。"""
-        locator_type = str(step.get("locator_type") or "").strip()
-        locator_value = self.resolver.resolve(str(step.get("locator_value") or "").strip())
+    def _resolve_pair(self, step: dict, prefix: str, needed: bool, label: str) -> tuple:
+        """解析一对定位信息。需要定位却缺失时直接报错 —— 这里是「假绿」bug 的封堵点。
+
+        prefix 传 "" 取主元素，传 "target_" 取第二元素（拖拽的目标）。
+        """
+        locator_type = str(step.get(f"{prefix}locator_type") or "").strip()
+        locator_value = self.resolver.resolve(str(step.get(f"{prefix}locator_value") or "").strip())
 
         if locator_type and locator_type not in LOCATOR_MAP:
             raise ValueError(
                 f"不支持的定位方式: {locator_type}（可用: {', '.join(LOCATOR_MAP)}）"
             )
-        if needs_locator and not (locator_type and locator_value):
+        if needed and not (locator_type and locator_value):
             raise ValueError(
-                f"{ACTION_LABELS.get(action, action)} 缺少元素定位信息"
-                "（需要同时填写定位方式和定位值）"
+                f"{label} 缺少元素定位信息（需要同时填写定位方式和定位值）"
             )
         return (LOCATOR_MAP[locator_type] if locator_type else None), locator_value
 
+    def _resolve_locator(self, step: dict, action: str, needs_locator: bool) -> tuple:
+        return self._resolve_pair(step, "", needs_locator, ACTION_LABELS.get(action, action))
+
+    def _resolve_target_locator(self, step: dict, action: str) -> tuple:
+        return self._resolve_pair(
+            step, "target_", True, f"{ACTION_LABELS.get(action, action)}的目标元素"
+        )
+
+    def _build_alert(self, wait_seconds=0):
+        """等弹窗出现。注意：native alert 不处理会卡死整个会话，所以宁可等也别硬取。"""
+        try:
+            return WebDriverWait(
+                self.driver, wait_seconds or DEFAULT_STEP_WAIT
+            ).until(EC.alert_is_present())
+        except TimeoutException as e:
+            raise ValueError("等不到弹出框（alert / confirm / prompt）") from e
+
+    def _scroll_into_view(self, elem) -> None:
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elem)
+
     def _execute(self, step: dict, action: str, order: int) -> None:
         """执行单个步骤。抛异常即表示该步骤失败。"""
+        if action not in ACTION_SPEC:
+            raise ValueError(
+                f"不支持的操作类型: {action}（可用: {', '.join(ACTION_LABELS)}）"
+            )
+
         input_value = self.resolver.resolve(str(step.get("input_value") or ""))
+        input_value2 = self.resolver.resolve(str(step.get("input_value2") or ""))
         # switch_iframe 填 default 表示「退回主文档」，此时不需要定位信息
         needs_locator = action in LOCATOR_ACTIONS and not (
             action == "switch_iframe" and input_value == "default"
@@ -305,6 +544,7 @@ class _StepRunner:
         by, locator_value = self._resolve_locator(step, action, needs_locator)
         wait_seconds = step.get("wait_seconds") or 0
 
+        # ---------- 导航 ----------
         if action == "open_url":
             # 旧实现允许用 description 兜底，保留这个兼容写法
             url = input_value or self.resolver.resolve(str(step.get("description") or ""))
@@ -312,27 +552,11 @@ class _StepRunner:
                 raise ValueError(f"无效的 URL: '{url}' — 必须以 http:// 或 https:// 开头")
             self.driver.get(url)
 
-        elif action == "click":
-            self._robust_click(by, locator_value, wait_seconds)
+        elif action == "refresh":
+            self.driver.refresh()
 
-        elif action == "input":
-            elem = self._wait_element(by, locator_value, wait_seconds)
-            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elem)
-            elem.clear()
-            if input_value:
-                elem.send_keys(input_value)
-
-        elif action == "clear":
-            elem = self._wait_element(by, locator_value, wait_seconds)
-            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elem)
-            elem.clear()
-
-        elif action == "force_wait":
-            seconds = _clamp_wait(wait_seconds or input_value or 1)
-            time.sleep(seconds)
-
-        elif action == "smart_wait":
-            self._wait_element(by, locator_value, wait_seconds)
+        elif action == "back":
+            self.driver.back()
 
         elif action == "switch_window":
             self._switch_window(input_value)
@@ -343,18 +567,115 @@ class _StepRunner:
             else:
                 self.driver.switch_to.frame(self._wait_element(by, locator_value, wait_seconds))
 
+        # ---------- 鼠标 ----------
+        elif action == "click":
+            self._robust_click(by, locator_value, wait_seconds)
+
+        elif action in ("double_click", "context_click"):
+            elem = self._wait_clickable(by, locator_value, wait_seconds)
+            self._scroll_into_view(elem)
+            actions = ActionChains(self.driver)
+            if action == "double_click":
+                actions.double_click(elem).perform()
+            else:
+                actions.context_click(elem).perform()
+                # 右键菜单会盖住后续操作，顺手按 ESC 关掉
+                ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+
+        elif action == "hover":
+            elem = self._wait_element(by, locator_value, wait_seconds)
+            self._scroll_into_view(elem)
+            ActionChains(self.driver).move_to_element(elem).perform()
+
+        elif action == "drag_and_drop":
+            source = self._wait_element(by, locator_value, wait_seconds)
+            target_by, target_value = self._resolve_target_locator(step, action)
+            target = self._wait_element(target_by, target_value, wait_seconds)
+            self._scroll_into_view(source)
+            ActionChains(self.driver).drag_and_drop(source, target).perform()
+
+        # ---------- 表单 ----------
+        elif action == "input":
+            elem = self._wait_element(by, locator_value, wait_seconds)
+            self._scroll_into_view(elem)
+            elem.clear()
+            if input_value:
+                elem.send_keys(input_value)
+
+        elif action == "clear":
+            elem = self._wait_element(by, locator_value, wait_seconds)
+            self._scroll_into_view(elem)
+            elem.clear()
+
+        elif action == "select_option":
+            if not input_value2:
+                raise ValueError("下拉框选择缺少选项值")
+            select = Select(self._wait_element(by, locator_value, wait_seconds))
+            how = (input_value or "label").strip().lower()
+            try:
+                if how == "label":
+                    select.select_by_visible_text(input_value2)
+                elif how == "value":
+                    select.select_by_value(input_value2)
+                elif how == "index":
+                    select.select_by_index(int(input_value2))
+                else:
+                    raise ValueError(f"不支持的选择方式: {how}（可用: label / value / index）")
+            except NoSuchElementException as e:
+                raise AssertionError(f"下拉框里没有 '{input_value2}' 这个选项") from e
+            except ValueError:
+                raise  # 下标不是数字 / 选择方式不认识，原样抛出
+            except TypeError as e:
+                raise ValueError(f"按下标选择时，下标必须是整数，实际填的是 '{input_value2}'") from e
+
+        elif action == "upload_file":
+            if not input_value:
+                raise ValueError("上传文件操作缺少文件路径")
+            # 上传控件（input[type=file]）通常被隐藏，只能 send_keys，不能等「可点击」
+            file_path = Path(input_value)
+            if not file_path.is_file():
+                raise ValueError(f"要上传的文件不存在: {input_value}")
+            self._wait_element(by, locator_value, wait_seconds).send_keys(str(file_path.resolve()))
+
+        elif action == "press_key":
+            ActionChains(self.driver).send_keys(_resolve_key(input_value)).perform()
+
+        # ---------- 弹窗 ----------
+        elif action == "alert_accept":
+            self._build_alert(wait_seconds).accept()
+
+        elif action == "alert_dismiss":
+            alert = self._build_alert(wait_seconds)
+            if input_value:
+                alert.send_keys(input_value)
+            alert.dismiss()
+
+        # ---------- 等待 ----------
+        elif action == "force_wait":
+            seconds = _clamp_wait(wait_seconds or input_value or 1)
+            time.sleep(seconds)
+
+        elif action == "smart_wait":
+            self._wait_element(by, locator_value, wait_seconds)
+
+        elif action == "wait_invisible":
+            timeout = wait_seconds or DEFAULT_STEP_WAIT
+            try:
+                WebDriverWait(self.driver, timeout).until(
+                    EC.invisibility_of_element_located((by, locator_value))
+                )
+            except TimeoutException as e:
+                raise AssertionError(f"等待元素消失超时（{timeout}s）：元素仍然存在") from e
+
+        # ---------- 滚动 ----------
         elif action == "scroll_to":
             elem = self._wait_element(by, locator_value, wait_seconds)
             self.driver.execute_script("arguments[0].scrollIntoView(true);", elem)
 
-        elif action == "execute_js":
-            if not input_value.strip():
-                raise ValueError("执行 JS 操作缺少脚本内容")
-            self.driver.execute_script(input_value)
+        elif action == "scroll_to_bottom":
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
 
-        elif action == "screenshot":
-            self._snap(input_value or "manual", order)
-
+        # ---------- 断言 ----------
         elif action == "assert_text_contains":
             actual = self._wait_element(by, locator_value, wait_seconds).text
             if input_value not in actual:
@@ -376,6 +697,41 @@ class _StepRunner:
             if exists != expected:
                 raise AssertionError(f"元素存在性断言失败: 期望={expected}，实际={exists}")
 
+        elif action == "assert_url_contains":
+            current = self.driver.current_url
+            if input_value not in current:
+                raise AssertionError(f"URL 断言失败: 期望包含 '{input_value}'，实际 '{current}'")
+
+        elif action == "assert_element_count":
+            actual = len(self.driver.find_elements(by, locator_value))
+            try:
+                expected = int(str(input_value).strip())
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"期望数量必须是整数，实际填的是 '{input_value}'") from e
+            if actual != expected:
+                raise AssertionError(f"元素数量断言失败: 期望 {expected} 个，实际 {actual} 个")
+
+        elif action == "assert_attribute":
+            if not input_value:
+                raise ValueError("断言元素属性缺少属性名")
+            actual = self._wait_element(by, locator_value, wait_seconds).get_attribute(input_value)
+            if input_value2:
+                if (actual or "") != input_value2:
+                    raise AssertionError(
+                        f"属性断言失败: {input_value} 期望 '{input_value2}'，实际 '{actual}'"
+                    )
+            elif actual is None:
+                raise AssertionError(f"属性断言失败: 元素上没有 {input_value} 属性")
+
+        # ---------- 其他 ----------
+        elif action == "execute_js":
+            if not input_value.strip():
+                raise ValueError("执行 JS 操作缺少脚本内容")
+            self.driver.execute_script(input_value)
+
+        elif action == "screenshot":
+            self._snap(input_value or "manual", order)
+
         elif action == "extract_variable":
             if not input_value:
                 raise ValueError("提取变量操作缺少变量名")
@@ -383,11 +739,6 @@ class _StepRunner:
             text = elem.text or elem.get_attribute("value") or ""
             self.resolver.set_extra_var(input_value, text)
             self.extracted[input_value] = text
-
-        else:
-            raise ValueError(
-                f"不支持的操作类型: {action}（可用: {', '.join(ACTION_LABELS)}）"
-            )
 
     def _switch_window(self, input_value: str) -> None:
         """切换窗口。旧实现整段 except: pass，这里改成切不中就说清楚。"""

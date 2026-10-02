@@ -8,7 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # 操作类型 / 定位方式直接取自执行引擎，避免两处各写一份枚举而悄悄漂移
-from app.services.web_executor import ACTION_LABELS, LOCATOR_ACTIONS, LOCATOR_MAP
+from app.services.web_executor import ACTION_LABELS, ACTION_SPEC, LOCATOR_MAP
 
 
 class WebStep(BaseModel):
@@ -17,7 +17,10 @@ class WebStep(BaseModel):
     字段名必须与 services/web_executor.py 读取的完全一致 ——
     两边对不上会静默跑偏（比如定位值写进 input_value 也能存进去，但执行时必然失败）。
 
-    只挡「必然跑不通」的错：未知操作类型、未知定位方式、需要定位却没填。
+    字段分成四个槽位，由 ACTION_SPEC 声明每个操作用到哪几个：
+      locator / target_locator（两个元素）、value / value2（两个参数）、wait（秒数）
+
+    只挡「必然跑不通」的错：未知操作类型、未知定位方式、规格里标了 required 的字段没填。
     **刻意不在这里要求 web 用例必须至少有一个步骤** —— 编辑器的正常流程是
     「先建用例 → 再编排步骤」，强制要求会让新建用例直接 422。空步骤由
     run-web 接口在执行时拦下来。
@@ -27,10 +30,13 @@ class WebStep(BaseModel):
     enabled: bool = True
     action_type: str
     input_value: str = ""
+    input_value2: str = ""
     wait_seconds: float = Field(0, ge=0, le=300)
     description: str = ""
     locator_type: str = ""
     locator_value: str = ""
+    target_locator_type: str = ""
+    target_locator_value: str = ""
 
     @field_validator("action_type")
     @classmethod
@@ -39,7 +45,7 @@ class WebStep(BaseModel):
             raise ValueError(f"不支持的操作类型: {value}（可用: {', '.join(ACTION_LABELS)}）")
         return value
 
-    @field_validator("locator_type")
+    @field_validator("locator_type", "target_locator_type")
     @classmethod
     def _check_locator_type(cls, value: str) -> str:
         if value and value not in LOCATOR_MAP:
@@ -47,15 +53,42 @@ class WebStep(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _check_locator_required(self):
-        # switch_iframe 的 input_value 填 default 表示退回主文档，此时不需要定位信息
-        if self.action_type == "switch_iframe" and self.input_value == "default":
+    def _check_required_fields(self):
+        """按 ACTION_SPEC 里标了 required 的字段逐个检查，空则 422。
+
+        规格是唯一事实来源 —— 以后新增操作只要在规格里标好 required，
+        这里和前端提示会自动跟上，不用两处各改一遍。
+        """
+        spec = ACTION_SPEC.get(self.action_type)
+        if spec is None:
             return self
-        if self.action_type in LOCATOR_ACTIONS and not (self.locator_type and self.locator_value):
-            raise ValueError(
-                f"{ACTION_LABELS[self.action_type]} 缺少元素定位信息"
-                "（需要同时填写 locator_type 与 locator_value）"
-            )
+        # switch_iframe 的 input_value 填 default 表示退回主文档，此时不需要定位信息
+        skip_locator = self.action_type == "switch_iframe" and self.input_value == "default"
+
+        filled_map = {
+            "locator": (
+                bool(self.locator_type and self.locator_value),
+                "需要同时填写 locator_type 与 locator_value",
+            ),
+            "target_locator": (
+                bool(self.target_locator_type and self.target_locator_value),
+                "需要同时填写 target_locator_type 与 target_locator_value",
+            ),
+            "value": (bool(str(self.input_value).strip()), "需要填写 input_value"),
+            "value2": (bool(str(self.input_value2).strip()), "需要填写 input_value2"),
+        }
+
+        for field in spec["fields"]:
+            name = field["name"]
+            if not field.get("required") or name not in filled_map:
+                continue
+            if skip_locator and name == "locator":
+                continue
+            filled, hint = filled_map[name]
+            if not filled:
+                raise ValueError(
+                    f"{spec['label']} 的「{field['label']}」不能为空（{hint}）"
+                )
         return self
 
 

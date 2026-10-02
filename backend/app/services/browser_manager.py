@@ -77,6 +77,12 @@ def _build_options(browser: str, headless: bool):
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
+
+    # 弹窗必须由步骤显式处理，不能被 WebDriver 悄悄关掉。
+    # Selenium 4 默认是 "dismiss and notify"：只要弹窗开着时有任何命令发过来
+    # （比如点击后那段「等 DOM 稳定」的 execute_script），它就把弹窗关掉并报错。
+    # 结果是「弹窗确认」步骤永远等不到弹窗 —— 用户写的 alert_accept 形同虚设。
+    options.set_capability("unhandledPromptBehavior", "ignore")
     return options
 
 

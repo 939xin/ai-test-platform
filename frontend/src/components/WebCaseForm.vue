@@ -12,6 +12,7 @@ import WebStepEditor from '@/components/WebStepEditor.vue'
 defineProps({
   form: { type: Object, required: true },
   actions: { type: Array, default: () => [] },
+  actionGroups: { type: Array, default: () => [] },
   locators: { type: Array, default: () => [] },
   webInfo: { type: Object, default: null },
 })
@@ -40,6 +41,7 @@ defineExpose({ validate })
       ref="stepEditorRef"
       v-model="form.steps"
       :actions="actions"
+      :action-groups="actionGroups"
       :locators="locators"
     />
   </div>
