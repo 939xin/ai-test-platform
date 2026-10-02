@@ -10,6 +10,7 @@ const routes = [
     children: [
       { path: 'projects', name: 'projects', component: () => import('@/views/ProjectList.vue'), meta: { title: '项目管理' } },
       { path: 'cases', name: 'cases', component: () => import('@/views/CaseList.vue'), meta: { title: '用例管理' } },
+      { path: 'scenarios', name: 'scenarios', component: () => import('@/views/ScenarioList.vue'), meta: { title: '场景测试' } },
       { path: 'plans', name: 'plans', component: () => import('@/views/PlanList.vue'), meta: { title: '测试计划' } },
       { path: 'executions', name: 'executions', component: () => import('@/views/ExecutionCenter.vue'), meta: { title: '执行中心' } },
       { path: 'reports', name: 'reports', component: () => import('@/views/ReportList.vue'), meta: { title: '测试报告' } },

@@ -30,6 +30,8 @@ CASES = [
             {"assertion_type": "response_body", "operator": "eq",
              "expected_value": "https://httpbin.org/get", "target": "$.url"},
         ],
+        # 提取响应里的 url，供场景里的下一步用 ${echo_url} 引用
+        "extract_json": [{"name": "echo_url", "source": "body", "expression": "$.url"}],
     },
     {
         "name": "GET /status/404 校验状态码",
@@ -66,8 +68,26 @@ CASES = [
             {"assertion_type": "response_body", "operator": "contains",
              "expected_value": "page=99", "target": "$.url"},
         ],
+        "extract_json": [{"name": "echo_url", "source": "body", "expression": "$.url"}],
+    },
+    {
+        # URL 整个由上一阶段提取的变量组成 —— 用来演示场景串联
+        "name": "串联·引用上一步提取的 url",
+        "method": "GET",
+        "url": "${echo_url}",
+        "priority": "P1",
+        "tags": "演示",
+        "assertions_json": [
+            {"assertion_type": "status_code", "operator": "eq", "expected_value": "200", "target": ""},
+        ],
+        # 这条用例的 URL 靠场景里的上一步提供变量，单独跑必然失败 —— 不单独执行
+        "needs_scenario": True,
     },
 ]
+
+# 场景：步骤 1 提取变量，步骤 2 直接引用它 —— 演示「用例之间传参」
+SCENARIO_NAME = "演示场景：提取 url → 引用 url"
+SCENARIO_STEPS = ["GET /get 连通性检查", "串联·引用上一步提取的 url"]
 
 
 def main() -> int:
@@ -98,24 +118,31 @@ def main() -> int:
         print(f"  环境 httpbin (id={env['id']})")
     env_id = env["id"]
 
-    # 3. 用例（同名则复用，避免重复执行时堆一堆副本）
+    # 3. 用例：同名则「收敛到本脚本的定义」（PUT 覆盖），避免重复执行时堆副本，
+    #    也保证旧数据里缺的提取规则能被补上 —— 否则场景串联会跑不通
     current = requests.get(f"{BASE}/projects/{pid}/cases", timeout=10).json()
     case_ids: list[int] = []
     for spec in CASES:
+        payload = {"type": "api", "body_type": "", "body_content": ""}
+        payload.update({k: v for k, v in spec.items() if k != "needs_scenario"})
         found = next((c for c in current if c["name"] == spec["name"]), None)
         if found:
+            r = requests.put(f"{BASE}/cases/{found['id']}", json=payload, timeout=10)
+            r.raise_for_status()
             case_ids.append(found["id"])
+            print(f"  用例 {spec['name']} （已存在，已同步定义，id={found['id']}）")
             continue
-        payload = {"type": "api", "body_type": "", "body_content": ""}
-        payload.update(spec)
         r = requests.post(f"{BASE}/projects/{pid}/cases", json=payload, timeout=10)
         r.raise_for_status()
         case_ids.append(r.json()["id"])
         print(f"  用例 {spec['name']} (id={case_ids[-1]})")
 
-    # 4. 执行一遍，留下历史记录
+    # 4. 执行一遍，留下历史记录（依赖场景变量的用例跳过，见 needs_scenario）
     print("\n执行用例：")
-    for cid in case_ids:
+    for spec, cid in zip(CASES, case_ids):
+        if spec.get("needs_scenario"):
+            print(f"  跳过 {spec['name']}（需在场景中执行）")
+            continue
         r = requests.post(f"{BASE}/cases/{cid}/run", json={"env_id": env_id, "timeout": 30}, timeout=60)
         if r.status_code != 200:
             print(f"  用例 {cid} 执行失败：HTTP {r.status_code}")
@@ -124,6 +151,28 @@ def main() -> int:
         n_pass = sum(1 for a in ex["result_json"].get("assertions", []) if a["passed"])
         n_all = len(ex["result_json"].get("assertions", []))
         print(f"  执行 #{ex['id']}  {ex['status']:<5} {ex['duration_ms']:>5}ms  断言 {n_pass}/{n_all}")
+
+    # 5. 场景（同名则复用）
+    by_name = {spec["name"]: cid for spec, cid in zip(CASES, case_ids)}
+    scenarios = requests.get(f"{BASE}/projects/{pid}/scenarios", timeout=10).json()
+    scenario = next((s for s in scenarios if s["name"] == SCENARIO_NAME), None)
+    if scenario is None:
+        r = requests.post(f"{BASE}/projects/{pid}/scenarios", json={
+            "name": SCENARIO_NAME,
+            "description": "步骤 1 提取 url，步骤 2 用 ${echo_url} 引用",
+            "steps": [{"case_id": by_name[n], "fail_strategy": "stop"} for n in SCENARIO_STEPS],
+        }, timeout=10)
+        r.raise_for_status()
+        scenario = r.json()
+        print(f"\n新建场景：{SCENARIO_NAME} (id={scenario['id']}，{len(SCENARIO_STEPS)} 步)")
+
+        r = requests.post(f"{BASE}/scenarios/{scenario['id']}/run",
+                          json={"env_id": env_id}, timeout=90)
+        if r.status_code == 200:
+            run = r.json()
+            print(f"  执行场景：{run['status']}  {run['total_duration_ms']}ms")
+            for s in run["steps"]:
+                print(f"    步骤{s['step_order']} {s['status']:<5} {s['case_name']}")
 
     print(f"\n完成。打开 http://localhost:5173/executions 查看（项目选「{PROJECT_NAME}」）。")
     return 0

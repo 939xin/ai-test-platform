@@ -221,6 +221,108 @@ def main() -> int:
         r = requests.get(f"{BASE}/reports/..%2Fconfig.py", timeout=10)
         check("报告接口挡住路径穿越", r.status_code in (400, 404))
 
+    # ==================== Day 3 · 场景串联（3b）====================
+    section("Day 3 · 场景串联 ★")
+
+    # 步骤 1：提取 httpbin 返回的 url；步骤 2：直接把这个变量当 URL 用
+    # —— 如果 ${echo_url} 没被解析，请求会因 URL 非法而报错，所以「步骤 2 通过」即证明串联生效
+    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        "name": "串联-步骤1 提取 url",
+        "type": "api", "method": "GET", "url": "https://httpbin.org/get",
+        "assertions_json": [
+            {"assertion_type": "status_code", "operator": "eq", "expected_value": "200", "target": ""},
+        ],
+        "extract_json": [{"name": "echo_url", "source": "body", "expression": "$.url"}],
+    }, timeout=10)
+    step1_case = r.json()["id"]
+
+    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        "name": "串联-步骤2 引用 ${echo_url}",
+        "type": "api", "method": "GET",
+        "url": "${echo_url}",  # 上一步提取的变量
+        "assertions_json": [
+            {"assertion_type": "status_code", "operator": "eq", "expected_value": "200", "target": ""},
+        ],
+    }, timeout=10)
+    step2_case = r.json()["id"]
+
+    # 一条必然失败的用例，用来验证 fail_strategy=stop
+    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        "name": "串联-必然失败",
+        "type": "api", "method": "GET", "url": "https://httpbin.org/get",
+        "assertions_json": [
+            {"assertion_type": "status_code", "operator": "eq", "expected_value": "999", "target": ""},
+        ],
+    }, timeout=10)
+    fail_case = r.json()["id"]
+
+    r = requests.post(f"{BASE}/projects/{pid}/scenarios", json={
+        "name": "登录链路串联验收",
+        "description": "步骤1 提取变量，步骤2 引用变量",
+        "steps": [
+            {"case_id": step1_case, "fail_strategy": "stop"},
+            {"case_id": step2_case, "fail_strategy": "stop"},
+        ],
+    }, timeout=10)
+    check("新建场景", r.status_code == 201)
+    scenario_id = r.json().get("id") if r.status_code == 201 else None
+
+    r = requests.get(f"{BASE}/scenarios/{scenario_id}", timeout=10)
+    detail = r.json() if r.status_code == 200 else {}
+    check("场景详情带用例名与顺序",
+          r.status_code == 200
+          and [s["case_name"] for s in detail.get("steps", [])] ==
+          ["串联-步骤1 提取 url", "串联-步骤2 引用 ${echo_url}"]
+          and [s["step_order"] for s in detail.get("steps", [])] == [1, 2])
+
+    r = requests.get(f"{BASE}/projects/{pid}/scenarios", timeout=10)
+    row = next((s for s in r.json() if s["id"] == scenario_id), {})
+    check("场景列表带步骤数", r.status_code == 200 and row.get("step_count") == 2)
+
+    r = requests.post(f"{BASE}/scenarios/{scenario_id}/run", json={"env_id": env_id}, timeout=90)
+    check("执行场景", r.status_code == 200)
+    if r.status_code == 200:
+        run = r.json()
+        steps = run["steps"]
+        check("场景整体通过", run["status"] == "pass")
+        check("步骤 1 提取到变量", steps[0]["extracted"].get("echo_url") == "https://httpbin.org/get",
+              str(steps[0]["extracted"].get("echo_url")))
+        check("串联生效：步骤 2 的 ${echo_url} 被解析成上一步的值",
+              steps[1]["status"] == "pass"
+              and steps[1]["result"]["request"]["url"] == "https://httpbin.org/get",
+              steps[1]["result"]["request"]["url"])
+        check("场景变量汇总含提取结果",
+              run["variables"].get("echo_url") == "https://httpbin.org/get")
+
+        r2 = requests.get(f"{BASE}/executions", params={"project_id": pid}, timeout=10)
+        recorded = {e["case_id"] for e in r2.json()}
+        check("场景各步骤落了执行记录",
+              step1_case in recorded and step2_case in recorded)
+
+    # fail_strategy=stop：前一步失败，后一步应记为 skip 且不执行
+    r = requests.post(f"{BASE}/projects/{pid}/scenarios", json={
+        "name": "失败中止验收",
+        "steps": [
+            {"case_id": fail_case, "fail_strategy": "stop"},
+            {"case_id": step2_case, "fail_strategy": "stop"},
+        ],
+    }, timeout=10)
+    stop_scenario = r.json()["id"] if r.status_code == 201 else None
+
+    r = requests.post(f"{BASE}/scenarios/{stop_scenario}/run", json={"env_id": env_id}, timeout=90)
+    if r.status_code == 200:
+        run = r.json()
+        check("失败即中止（fail_strategy=stop）",
+              run["status"] == "fail"
+              and run["steps"][0]["status"] == "fail"
+              and run["steps"][1]["status"] == "skip",
+              f"{run['steps'][0]['status']} → {run['steps'][1]['status']}")
+
+    r = requests.delete(f"{BASE}/scenarios/{stop_scenario}", timeout=10)
+    check("删除场景", r.status_code == 204)
+
+
+
     # ==================== 清理 ====================
     section("清理验收数据")
     if case_id:

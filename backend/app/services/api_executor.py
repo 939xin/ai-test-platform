@@ -21,16 +21,17 @@ MAX_TIMEOUT = 120
 def build_request(case: dict, environment: dict, resolver: VariableResolver) -> tuple:
     """构造请求三要素。返回 (method, full_url, headers, body, auth)。"""
     method = (case.get("method") or "GET").upper()
-    raw_url = (case.get("url") or "").strip()
-    base_url = (environment.get("base_url") or "").strip().rstrip("/")
 
-    if raw_url.startswith(("http://", "https://")) or not base_url:
-        full_url = raw_url
+    # 必须先解析变量、再判断要不要拼 base_url。
+    # 反过来的话，URL 完全由 ${变量} 组成时（场景串联的典型用法）字面上不以 http 开头，
+    # 会被误判成相对路径，拼出 https://base/https://real-url 这种畸形地址。
+    resolved_url = resolver.resolve((case.get("url") or "").strip()).replace(" ", "")
+    resolved_base = resolver.resolve((environment.get("base_url") or "").strip().rstrip("/"))
+
+    if resolved_url.startswith(("http://", "https://")) or not resolved_base:
+        full_url = resolved_url
     else:
-        full_url = f"{base_url}/{raw_url.lstrip('/')}"
-
-    # 用户可能误输入带空格的 URL
-    full_url = resolver.resolve(full_url.replace(" ", ""))
+        full_url = f"{resolved_base}/{resolved_url.lstrip('/')}"
 
     headers = {}
     for key, value in (case.get("headers_json") or {}).items():

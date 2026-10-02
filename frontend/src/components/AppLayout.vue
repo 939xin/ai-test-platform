@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  Calendar, DataAnalysis, Document, Folder, MagicStick,
+  Calendar, Connection, DataAnalysis, Document, Folder, MagicStick,
   Setting, Tools, VideoPlay, Warning,
 } from '@element-plus/icons-vue'
 
@@ -14,6 +14,7 @@ const route = useRoute()
 const navItems = [
   { name: 'projects', title: '项目管理', icon: Folder },
   { name: 'cases', title: '用例管理', icon: Document },
+  { name: 'scenarios', title: '场景测试', icon: Connection },
   { name: 'plans', title: '测试计划', icon: Calendar },
   { name: 'executions', title: '执行中心', icon: VideoPlay },
   { name: 'reports', title: '测试报告', icon: DataAnalysis },
