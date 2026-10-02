@@ -30,6 +30,7 @@ def _case_to_dict(case) -> dict:
         "auth_type": case.auth_type,
         "auth_value": case.auth_value,
         "assertions_json": case.assertions_json or [],
+        "extract_json": case.extract_json or [],
     }
 
 

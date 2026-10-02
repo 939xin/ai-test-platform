@@ -103,7 +103,11 @@ class TestCaseOut(BaseModel):
 
 
 class TestCaseBrief(BaseModel):
-    """列表页用的精简结构，不带 requests/response 大字段。"""
+    """列表页用的精简结构，不带请求体/前置脚本这类大字段。
+
+    assertions_json / extract_json 只占几行，但列表页要用它们的条数做展示 ——
+    少了它们，「断言」列会永远显示 0（排查过的一个真实 bug）。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -116,4 +120,6 @@ class TestCaseBrief(BaseModel):
     enabled: bool
     method: str
     url: str
+    assertions_json: list = Field(default_factory=list)
+    extract_json: list = Field(default_factory=list)
     updated_at: datetime

@@ -1,10 +1,19 @@
 <script setup>
+import { computed } from 'vue'
+
 import StatusTag from '@/components/StatusTag.vue'
 
-defineProps({
+const props = defineProps({
   // 一次执行记录（ExecutionOut）：{ status, duration_ms, result_json }
   execution: { type: Object, required: true },
 })
+
+// 提取到的变量：{变量名: 值}，没配提取规则时为空
+const extracted = computed(() => props.execution.result_json?.extracted || {})
+const extractErrors = computed(() => props.execution.result_json?.extract_errors || [])
+const hasExtract = computed(
+  () => Object.keys(extracted.value).length > 0 || extractErrors.value.length > 0,
+)
 
 function prettyJson(value) {
   if (value == null || value === '') return '—'
@@ -61,6 +70,24 @@ function prettyJson(value) {
           description="该用例没有断言条件"
           :image-size="60"
         />
+      </el-tab-pane>
+
+      <el-tab-pane v-if="hasExtract" :label="`变量 (${Object.keys(extracted).length})`">
+        <div
+          v-for="(value, name) in extracted"
+          :key="name"
+          class="extract-item"
+          :class="value === null ? 'is-missing' : 'is-found'"
+        >
+          <span class="mono extract-name">{{ name }}</span>
+          <span class="mono extract-value">{{ value === null ? '未匹配到值' : value }}</span>
+        </div>
+        <div v-for="(err, i) in extractErrors" :key="`e${i}`" class="extract-error">
+          <span class="mono">{{ err }}</span>
+        </div>
+        <p class="extract-hint">
+          这些变量可在后续用例里用 <code>${变量名}</code> 引用；提取失败不影响用例结果。
+        </p>
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -139,5 +166,50 @@ function prettyJson(value) {
 
 .assert-mark {
   font-weight: 700;
+}
+
+.extract-item {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 10px;
+  margin-bottom: 6px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font-size: 12.5px;
+}
+
+.extract-item.is-found {
+  background: var(--signal-pass-bg);
+  border-color: #bfe3d1;
+}
+
+.extract-item.is-missing {
+  background: var(--signal-skip-bg);
+  border-color: #d5dde1;
+}
+
+.extract-name {
+  font-weight: 600;
+  color: var(--text-1);
+  flex-shrink: 0;
+}
+
+.extract-value {
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+.extract-error {
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--signal-warn);
+}
+
+.extract-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
 }
 </style>

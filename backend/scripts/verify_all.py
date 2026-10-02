@@ -123,12 +123,26 @@ def main() -> int:
             {"assertion_type": "response_body", "operator": "eq",
              "expected_value": "https://httpbin.org/get", "target": "$.url"},
         ],
+        # 一好一坏：验证提取成功，也验证「提取失败不算用例失败」
+        "extract_json": [
+            {"name": "echo_url", "source": "body", "expression": "$.url"},
+            {"name": "resp_status", "source": "status", "expression": ""},
+            {"name": "missing", "source": "body", "expression": "$.no.such.path"},
+        ],
     }, timeout=10)
     check("新建用例", r.status_code == 201)
     case_id = r.json().get("id") if r.status_code == 201 else None
 
     r = requests.get(f"{BASE}/cases/{case_id}", timeout=10)
     check("断言 JSON 完整保存", r.status_code == 200 and len(r.json()["assertions_json"]) == 2)
+
+    # 列表接口必须带断言/提取的条数，否则列表页那两列永远显示 0（踩过的真实 bug）
+    r = requests.get(f"{BASE}/projects/{pid}/cases", timeout=10)
+    row = next((c for c in r.json() if c["id"] == case_id), {})
+    check("列表接口带断言与提取条数（列表页展示用）",
+          r.status_code == 200
+          and len(row.get("assertions_json") or []) == 2
+          and len(row.get("extract_json") or []) == 3)
 
     r = requests.get(f"{BASE}/projects/{pid}/cases", params={"type": "api"}, timeout=10)
     check("按类型筛选", r.status_code == 200 and len(r.json()) == 1)
@@ -147,6 +161,17 @@ def main() -> int:
         check("请求/响应已记录",
               ex["result_json"]["response"]["status"] == 200
               and ex["result_json"]["request"]["url"] == "https://httpbin.org/get")
+
+        # ---------- 变量提取（3a）----------
+        extracted = ex["result_json"].get("extracted") or {}
+        check("提取响应体变量（JSONPath）",
+              extracted.get("echo_url") == "https://httpbin.org/get", str(extracted.get("echo_url")))
+        check("提取状态码变量", extracted.get("resp_status") == 200, str(extracted.get("resp_status")))
+        check("提取失败不影响用例结果",
+              extracted.get("missing") is None
+              and ex["status"] == "pass"
+              and len(ex["result_json"].get("extract_errors") or []) >= 1)
+
         execution_id = ex["id"]
     else:
         execution_id = None

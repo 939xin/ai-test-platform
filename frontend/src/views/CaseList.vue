@@ -37,6 +37,10 @@ function assertionCount(row) {
   return (row.assertions_json || []).length
 }
 
+function extractCount(row) {
+  return (row.extract_json || []).length
+}
+
 function formatTime(value) {
   return value ? value.replace('T', ' ').slice(0, 19) : '—'
 }
@@ -166,6 +170,11 @@ onMounted(async () => {
             <span class="mono">{{ assertionCount(row) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="提取" width="76" align="center">
+          <template #default="{ row }">
+            <span class="mono" :class="{ 'is-zero': !extractCount(row) }">{{ extractCount(row) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="更新时间" width="170">
           <template #default="{ row }">
             <span class="mono">{{ formatTime(row.updated_at) }}</span>
@@ -214,5 +223,9 @@ onMounted(async () => {
 .type-chip {
   font-size: 12px;
   color: var(--text-2);
+}
+
+.is-zero {
+  color: var(--text-3);
 }
 </style>

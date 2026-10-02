@@ -51,6 +51,13 @@ const OPERATORS = [
   { value: 'gt', label: '大于' },
 ]
 
+// 变量提取来源：从响应体（JSONPath）/ 响应头 / 状态码取值，供后续步骤用 ${变量名} 引用
+const EXTRACT_SOURCES = [
+  { value: 'body', label: '响应体 (JSONPath)' },
+  { value: 'header', label: '响应头' },
+  { value: 'status', label: '状态码' },
+]
+
 const form = reactive({
   name: '',
   type: 'api',
@@ -65,6 +72,7 @@ const form = reactive({
   auth_type: 'none',
   auth_value: '',
   assertions: [],
+  extracts: [],
 })
 
 const rules = {
@@ -87,6 +95,7 @@ function resetForm() {
     auth_type: 'none',
     auth_value: '',
     assertions: [{ assertion_type: 'status_code', operator: 'eq', target: '', expected_value: '200' }],
+    extracts: [],
   })
   activeTab.value = 'request'
 }
@@ -113,6 +122,7 @@ async function load() {
       auth_type: data.auth_type,
       auth_value: data.auth_value,
       assertions: (data.assertions_json || []).map((a) => ({ ...a })),
+      extracts: (data.extract_json || []).map((e) => ({ ...e })),
     })
   } finally {
     loading.value = false
@@ -153,6 +163,14 @@ async function submit() {
           operator: a.operator,
           target: a.target || '',
           expected_value: String(a.expected_value),
+        })),
+      // 变量名为空的提取规则没意义，直接丢掉
+      extract_json: form.extracts
+        .filter((e) => String(e.name ?? '').trim())
+        .map((e) => ({
+          name: String(e.name).trim(),
+          source: e.source || 'body',
+          expression: e.source === 'status' ? '' : String(e.expression ?? '').trim(),
         })),
     }
     if (isEdit.value) {
@@ -289,6 +307,37 @@ watch(visible, (open) => {
               + 添加断言
             </el-button>
             <p class="hint">期望值留空的断言会被后端静默跳过。</p>
+          </div>
+        </el-tab-pane>
+
+        <!-- ============ 提取变量 ============ -->
+        <el-tab-pane label="提取变量" name="extracts">
+          <div class="rows-editor">
+            <div v-for="(row, index) in form.extracts" :key="index" class="assert-row">
+              <el-input v-model="row.name" class="assert-type" placeholder="变量名，如 token" />
+              <el-select v-model="row.source" class="assert-op">
+                <el-option v-for="s in EXTRACT_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
+              </el-select>
+              <el-input
+                v-model="row.expression"
+                class="assert-target"
+                :disabled="row.source === 'status'"
+                :placeholder="
+                  row.source === 'body'
+                    ? 'JSONPath，如 $.token'
+                    : row.source === 'header'
+                      ? '响应头名，如 Content-Type'
+                      : '状态码无需填写'
+                "
+              />
+              <el-button link type="danger" @click="form.extracts.splice(index, 1)">移除</el-button>
+            </div>
+            <el-button link type="primary" @click="form.extracts.push({ name: '', source: 'body', expression: '' })">
+              + 添加提取规则
+            </el-button>
+            <p class="hint">
+              提取到的变量在后续用例里用 <code>${变量名}</code> 引用（场景串联时传给下一步）。提取失败不影响用例结果。
+            </p>
           </div>
         </el-tab-pane>
       </el-tabs>
