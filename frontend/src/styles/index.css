@@ -25,7 +25,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ============ Element Plus 主题覆盖：换成深青蓝 ============ */
+/* ============ Element Plus 主题覆盖：深青蓝 + 卡片化 ============ */
 :root {
   --el-color-primary: #16697a;
   --el-color-primary-light-3: #4a93a3;
@@ -40,31 +40,160 @@ body {
   --el-color-error: #d64545;
   --el-color-warning: #d98c1f;
 
-  --el-border-radius-base: 3px;
-  --el-border-radius-small: 2px;
+  --el-border-radius-base: var(--radius-sm);
+  --el-border-radius-small: 4px;
   --el-font-family: var(--font-ui);
 
   --el-text-color-primary: #1a2b32;
-  --el-text-color-regular: #4a5c64;
-  --el-border-color: #e2e8ea;
-  --el-border-color-light: #eaeeef;
+  --el-text-color-regular: #52646c;
+  --el-border-color: #e6ebed;
+  --el-border-color-light: #eef2f3;
+  --el-fill-color-blank: #ffffff;
+
+  --el-box-shadow-light: var(--shadow-card);
+  --el-box-shadow: var(--shadow-raise);
 }
 
-/* 去掉默认的圆润感与重阴影 */
-.el-button {
-  font-weight: 500;
-}
-
+/* ---------- 卡片：靠阴影与圆角分层，不再靠边框 ---------- */
 .el-card {
-  border-radius: var(--radius);
-  border-color: var(--border);
-  box-shadow: none;
+  border-radius: var(--radius-lg);
+  border-color: transparent;
+  box-shadow: var(--shadow-card);
+}
+
+.el-card__body {
+  padding: 18px 20px;
+}
+
+/* ---------- 表格：加大行距、去掉竖线，表头用浅底 ---------- */
+.el-table {
+  --el-table-border-color: #eef2f3;
+  --el-table-header-bg-color: var(--bg-sunken);
+  --el-table-row-hover-bg-color: #f4f9fa;
+  font-size: 13.5px;
 }
 
 .el-table th.el-table__cell {
-  background: #f0f3f4;
-  font-weight: 600;
+  background: var(--bg-sunken);
   color: var(--text-2);
+  font-weight: 600;
+  padding: 12px 0;
+}
+
+.el-table td.el-table__cell {
+  padding: 13px 0;
+}
+
+.el-table__inner-wrapper::before {
+  display: none;  /* 表格底部那条通栏横线 */
+}
+
+/* 分页器与表格之间的呼吸感 */
+.el-pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
+/* ---------- 表单控件：统一圆角 ---------- */
+.el-button {
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--radius-sm);
+}
+
+.el-select-dropdown,
+.el-popper.is-light {
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raise);
+}
+
+/* ---------- 弹窗 / 抽屉：大圆角 + 浮起阴影 ---------- */
+.el-dialog {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.el-dialog__header {
+  margin-right: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.el-dialog__footer {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.el-drawer {
+  box-shadow: var(--shadow-pop);
+}
+
+.el-drawer__header {
+  margin-bottom: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.el-message-box {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+/* ---------- 空状态：默认那张灰插图与品牌色无关，换成品牌色的圆点 ---------- */
+.el-empty {
+  padding: 44px 0;
+}
+
+.el-empty__image {
+  display: none;
+}
+
+.el-empty__description::before {
+  content: "";
+  display: block;
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  background: var(--brand-100);
+  box-shadow: inset 0 0 0 1px rgba(22, 105, 122, 0.14);
+}
+
+.el-empty__description p {
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+/* ---------- 标签 / 提示 ---------- */
+.el-tag {
+  border-radius: 6px;
+}
+
+/* ---------- 滚动条：细一点，别抢视线 ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cfd8db;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #b6c2c6;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* 页面切换的淡入 */

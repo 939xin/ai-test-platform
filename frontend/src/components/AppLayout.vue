@@ -114,11 +114,12 @@ onMounted(checkHealth)
   overflow: hidden;
 }
 
-/* ---------- 侧栏：深色控制台 ---------- */
+/* ---------- 侧栏：浅色，与内容区同一套底色体系 ---------- */
 .sider {
   width: var(--sider-width);
   flex-shrink: 0;
-  background: var(--bg-sider);
+  background: var(--sider-bg);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
 }
@@ -128,17 +129,17 @@ onMounted(checkHealth)
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
 }
 
 .brand-mark {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: var(--radius);
+  border-radius: 8px;
   background: var(--brand-700);
   color: #fff;
   font-size: 15px;
@@ -146,15 +147,14 @@ onMounted(checkHealth)
 }
 
 .brand-text {
-  color: #e8eef0;
-  font-size: 14px;
+  color: var(--text-1);
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.3px;
 }
 
 .nav {
   flex: 1;
-  padding: 10px 8px;
+  padding: 12px 12px;
   overflow-y: auto;
 }
 
@@ -163,31 +163,30 @@ onMounted(checkHealth)
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
-  margin-bottom: 2px;
-  border-radius: var(--radius);
-  color: #9fb0b7;
+  margin-bottom: 3px;
+  border-radius: 8px;
+  color: var(--sider-text);
   font-size: 13.5px;
   text-decoration: none;
-  /* 左侧竖条是选中指示，比整块高亮更克制 */
-  border-left: 2px solid transparent;
   transition: background 0.14s ease, color 0.14s ease;
 }
 
 .nav-item:hover {
-  background: var(--bg-sider-hover);
-  color: #e8eef0;
+  background: var(--sider-hover);
+  color: var(--text-1);
 }
 
+/* 选中项：品牌色浅底 + 品牌色字，比深色侧栏上那块高亮更轻 */
 .nav-item.router-link-active,
 .nav-item.nav-active {
-  background: var(--bg-sider-hover);
-  color: #fff;
-  border-left-color: var(--brand-500);
+  background: var(--sider-active-bg);
+  color: var(--sider-active-text);
+  font-weight: 600;
 }
 
 .sider-foot {
-  padding: 10px 12px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--border);
 }
 
 .conn {
@@ -195,11 +194,11 @@ onMounted(checkHealth)
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 8px;
+  padding: 7px 9px;
   border: none;
-  border-radius: var(--radius);
+  border-radius: 8px;
   background: transparent;
-  color: #8a9ba3;
+  color: var(--text-3);
   font-family: var(--font-ui);
   font-size: 12px;
   cursor: pointer;
@@ -207,7 +206,7 @@ onMounted(checkHealth)
 }
 
 .conn:hover {
-  background: var(--bg-sider-hover);
+  background: var(--sider-hover);
 }
 
 .dot {
@@ -221,7 +220,7 @@ onMounted(checkHealth)
 .conn--ok .dot { background: var(--signal-pass); }
 .conn--warn .dot { background: var(--signal-warn); }
 .conn--down .dot { background: var(--signal-fail); }
-.conn--ok { color: #7fc4a3; }
+.conn--ok { color: var(--signal-pass); }
 
 /* ---------- 主区 ---------- */
 .main {
@@ -267,6 +266,6 @@ onMounted(checkHealth)
 .content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px 28px 32px;
 }
 </style>

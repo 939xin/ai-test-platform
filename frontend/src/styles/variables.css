@@ -1,11 +1,13 @@
 /*
- * 设计令牌 — 工业实用主义
+ * 设计令牌 — 现代 SaaS 卡片化
  *
- * 这是一个测试平台，形态是「工程仪表盘」：长时间盯屏、数据密集、状态驱动。
- * 因此配色是功能性的信号色系统，而不是装饰性的彩色。
+ * 前一版是「工业仪表盘」取向（3px 圆角、无阴影、深色侧栏）。这一版换成
+ * 浅色外壳 + 卡片承载内容：靠圆角与克制的阴影分层，而不是靠边框和底色差。
+ *
+ * 改配色 / 圆角 / 阴影一律改这里，不要在组件里散落写死。
  */
 :root {
-  /* ---------- 品牌色：深青蓝（仪器面板感，刻意避开 Element Plus 默认蓝）---------- */
+  /* ---------- 品牌色：深青蓝（保留，是平台的身份色）---------- */
   --brand-900: #0e3a45;
   --brand-700: #16697a;
   --brand-500: #1e8a9e;
@@ -22,24 +24,37 @@
   --signal-skip: #7a8b94;
   --signal-skip-bg: #eff2f4;
 
-  /* ---------- 中性色：冷灰，不用纯白，减少长时间阅读的刺眼感 ---------- */
-  --bg-app: #f5f7f8;
+  /* ---------- 中性色 ----------
+     bg-app 比卡片白更深一档，卡片才浮得起来（前一版只差 4 个色阶，卡片是「贴」在页面上的） */
+  --bg-app: #eef1f3;
   --bg-surface: #ffffff;
-  --bg-sider: #12232b;
-  --bg-sider-hover: #1b3038;
-  --bg-sider-active: #16697a;
-  --border: #e2e8ea;
-  --border-strong: #cfd8db;
+  --bg-sunken: #f6f8f9;
+  --border: #e6ebed;
+  --border-strong: #d5dde0;
   --text-1: #1a2b32;
-  --text-2: #4a5c64;
+  --text-2: #52646c;
   --text-3: #8a9ba3;
+
+  /* ---------- 侧栏：改浅色，与内容区统一 ---------- */
+  --sider-width: 220px;
+  --sider-bg: #ffffff;
+  --sider-text: #52646c;
+  --sider-hover: #f2f6f7;
+  --sider-active-bg: #e3f2f5;
+  --sider-active-text: #16697a;
+
+  /* ---------- 阴影：三层，越靠上的元素阴影越大 ---------- */
+  --shadow-card: 0 1px 2px rgba(16, 32, 40, 0.04), 0 2px 8px rgba(16, 32, 40, 0.05);
+  --shadow-raise: 0 2px 6px rgba(16, 32, 40, 0.06), 0 8px 20px rgba(16, 32, 40, 0.07);
+  --shadow-pop: 0 6px 16px rgba(16, 32, 40, 0.10), 0 16px 40px rgba(16, 32, 40, 0.12);
 
   /* ---------- 字体：中文走系统栈，数据一律等宽 ---------- */
   --font-ui: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
 
-  /* ---------- 尺度：小圆角，工业感 ---------- */
-  --radius: 3px;
-  --sider-width: 208px;
-  --header-height: 52px;
+  /* ---------- 尺度：圆角分三档，阴影与圆角配套使用 ---------- */
+  --radius-sm: 6px;    /* 输入框、按钮 */
+  --radius: 10px;      /* 卡片内的小块元素 */
+  --radius-lg: 14px;   /* 卡片 */
+  --header-height: 56px;
 }
