@@ -1,10 +1,15 @@
-# AI 辅助软件测试平台
+# 鑫测试平台
 
-> 接口测试 + Web UI 测试 + AI 辅助 | FastAPI · Vue3 · MySQL
+> 接口测试 + Web UI 测试 | FastAPI · Vue3 · MySQL
 
-面向软件测试人员的 Web 测试管理平台，覆盖完整测试闭环：
+面向软件测试人员的 Web 测试管理平台，目标闭环：
 
 **项目 → 环境 → 用例 → 执行 → 报告 → 缺陷 → AI 辅助**
+
+> 当前已完成闭环的前五环；缺陷与 AI 辅助仍是占位页，见文末「开发状态」。
+>
+> 本仓库另有一套**已冻结的 PySide6 桌面版**（`app/`），执行引擎的断言、变量解析、
+> 请求构造、Selenium 步骤执行等逻辑复用自它，改引擎时两边都要看一眼。
 
 ---
 
@@ -17,8 +22,8 @@
 | 数据库 | MySQL 8（Docker） |
 | 接口测试 | requests + jsonpath-ng |
 | Web UI 测试 | Selenium WebDriver |
-| AI 辅助 | DeepSeek API |
-| 部署 | Docker Compose |
+| AI 辅助 | DeepSeek API（📋 尚未接入） |
+| 部署 | Docker Compose（目前只有数据库在用） |
 
 ---
 
@@ -45,46 +50,50 @@
 ```
 
 **关于 `services/` 层**：执行引擎的断言逻辑、变量解析、请求构造、Selenium 步骤执行等，
-复用自一套已经过 95 项自动化验证的既有引擎实现，剥离了原桌面框架的线程外壳后
-改为无状态服务，供 FastAPI 直接调用。
+复用自既有的桌面版实现，剥离了原桌面框架的线程外壳后改为无状态服务，供 FastAPI 直接调用。
+整套引擎现在由 `backend/scripts/verify_all.py` 的 122 项验收覆盖。
 
 ---
 
 ## 快速开始
 
-### 1. 数据库
+### 一键启动（推荐）
 
 ```bash
+start.bat        # 依次拉起 Docker + MySQL + 后端 + 前端
+stop.bat         # 全部停掉
+```
+
+首次运行会自动建 venv、装依赖、从 `.env.example` 复制配置，需要等一会儿。
+
+> ⚠️ 依赖 Docker Desktop 已在运行 —— 脚本会先 `docker info` 探活，
+> 没起会直接退出并提示，不会留下半启动状态。
+
+### 手动启动
+
+```bash
+# 1. 数据库（映射到 3307，本机若已装 MySQL，3306 通常被占用）
 docker compose up -d mysql
-```
 
-> MySQL 映射到 **3307** 端口（本机若已装 MySQL，3306 通常被占用）。
-
-### 2. 后端
-
-```bash
+# 2. 后端
 cd backend
-cp .env.example .env                      # 首次，按需修改
-python -m venv venv
-venv/Scripts/pip install -r requirements.txt
-venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
-```
+cp .env.example .env                      # 首次
+venv/Scripts/python.exe -m uvicorn app.main:app --port 8000
 
-启动时会自动建表并创建默认账号。
-
-- API 文档：http://localhost:8000/docs
-- 健康检查：http://localhost:8000/api/health
-- 默认账号：`admin` / `admin123`
-
-### 3. 前端
-
-```bash
+# 3. 前端
 cd frontend
-npm install
 npm run dev
 ```
 
-打开 http://localhost:5173 —— 首页会显示后端与数据库的连通状态。
+> ⚠️ **后端不要加 `--reload`** —— 本机上它不可靠：改了代码不重载，
+> 表现为新路由持续 404，但代码其实是好的。改完后端手动重启即可。
+
+启动时会自动建表并创建默认账号。
+
+- Web UI：http://localhost:5173
+- API 文档：http://localhost:8000/docs
+- 健康检查：http://localhost:8000/api/health
+- 默认账号：`admin` / `admin123`
 
 ---
 
@@ -96,18 +105,32 @@ npm run dev
 │   │   ├── main.py             # 入口 + CORS + 建表
 │   │   ├── config.py           # 配置（读 .env）
 │   │   ├── database.py         # SQLAlchemy engine / session
-│   │   ├── models/             # ORM 模型（10 张表）
+│   │   ├── models/             # ORM 模型（11 张表）
+│   │   ├── schemas/            # 请求 / 响应模型（Pydantic）
 │   │   ├── api/                # 路由
-│   │   └── services/           # ★ 执行引擎（复用层）
-│   └── scripts/verify_engine.py
+│   │   ├── services/           # ★ 执行引擎（复用层）
+│   │   └── static/demo/        # Web 测试的离线演示靶页
+│   └── scripts/                # verify_all.py（一键验收）/ seed_demo.py（演示数据）
+│                               # debug_new_ops.py（单独复跑新增操作用例）
 ├── frontend/                   # Vue3 前端
 │   └── src/
 │       ├── api/                # axios 封装
-│       ├── components/         # 公共组件（AppLayout / PageHeader / StatusTag ...）
+│       ├── components/         # 公共组件
+│       │   ├── AppLayout.vue         # 侧栏 + 顶栏外壳
+│       │   ├── ApiCaseForm.vue       # 接口用例表单区（请求/断言/提取）
+│       │   ├── WebCaseForm.vue       # UI 用例表单区
+│       │   ├── WebStepEditor.vue     # 步骤编排器（31 种操作）
+│       │   └── ...                   # PageHeader / StatusTag / 各编辑抽屉与弹窗
 │       ├── views/              # 页面
+│       │   ├── ApiCaseList.vue       # 接口测试列表
+│       │   ├── WebCaseList.vue       # UI 测试列表
+│       │   ├── CaseEditor.vue        # 用例全屏编辑页（两种类型共用）
+│       │   └── ...                   # 项目/场景/计划/执行中心/报告/环境
 │       ├── router/
-│       └── styles/             # 设计令牌
-├── app/                        # 既有桌面版源码（引擎复用来源）
+│       └── styles/             # 设计令牌（改配色只改这里）
+├── app/                        # 已冻结的桌面版源码（引擎复用来源）
+├── dev_logs/                   # 每日开发日志（取舍与踩坑都记在这）
+├── time/CHANGELOG.md           # 版本功能清单
 ├── docker-compose.yml
 └── docs/                       # 需求 / 技术 / 设计文档
 ```
@@ -116,20 +139,38 @@ npm run dev
 
 ## 数据模型
 
-10 张表：`user` · `project` · `environment` · `test_case` · `scenario` ·
-`scenario_step` · `test_plan` · `execution` · `defect` · `ai_task`
+11 张表：`user` · `project` · `environment` · `test_case` · `scenario` ·
+`scenario_step` · `test_plan` · `test_plan_case` · `execution` · `defect` · `ai_task`
 
 用例的请求头、断言、步骤等子结构以 JSON 字段存储，避免多表 join。
+唯一的例外是**用例与计划、用例与场景**这两处关联 —— 它们需要外键级联
+（删掉用例时关联自动清理），所以用关联表而不是 JSON 数组。
 
 ---
 
 ## 开发状态
 
+> 更新时间：2026-10-02（Day 6）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
+
 | 模块 | 状态 |
 |---|---|
-| 工程骨架 / 数据库 / 认证 | ✅ 完成 |
-| 执行引擎（接口） | ✅ 完成 |
-| 项目管理 / 用例管理 | 🚧 进行中 |
-| 执行中心 / 报告 / 缺陷 | 📋 计划中 |
-| AI 辅助（用例生成 / 失败分析） | 📋 计划中 |
-| Selenium 集成 / Docker 部署 | 📋 计划中 |
+| 工程骨架 / 数据库 / 认证 | ✅ 完成（登录能签发 JWT，但**接口尚未统一校验**） |
+| 执行引擎（接口 + Web UI） | ✅ 完成 |
+| 项目管理 / 环境变量 | ✅ 完成 |
+| 用例管理（接口 / UI 两条独立线路） | ✅ 完成 |
+| 场景串联 / 数据驱动 | ✅ 完成（仅接口用例） |
+| 执行中心 / 测试报告 / 测试计划 | ✅ 完成 |
+| 缺陷管理 | 📋 占位页 |
+| AI 辅助（用例生成 / 失败分析） | 📋 占位页（`.env` 里 key 是空占位） |
+| 设置 | 📋 占位页 |
+| 列表分页 | 📋 未做（接口一次性返回全部） |
+| Docker 部署（含前后端） | 📋 仅数据库跑了 compose |
+
+### 验收
+
+```bash
+cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 122 项，需后端已启动
+```
+
+前端改动后建议用浏览器过一遍 13 条路由，确认无 console 报错与失败请求。
+

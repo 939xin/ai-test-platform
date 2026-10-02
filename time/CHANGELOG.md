@@ -1,11 +1,85 @@
 # 版本功能清单
 
-> 项目：接口自动化测试工具  
+> 项目：鑫测试平台  
 > 用途：记录每个版本的功能点，方便版本回溯
+>
+> 本仓库有两套代码：**v2.x 是当前在做的 Web 平台**（`backend/` + `frontend/`），
+> **v1.0.0 是已冻结的 PySide6 桌面版**（`app/`），作为执行引擎的复用源保留。
 
 ---
 
-## v1.0.0 (2026-06-27) — 基础框架 + 全功能 MVP
+## v2.0.0 (2026-10-02) — Web 平台 MVP ★当前版本
+
+> 从 PySide6 桌面版重做为 Web 平台：Vue3 + Element Plus / FastAPI + MySQL。
+> 按 Day 1–6 推进，每日的取舍与踩坑见 `dev_logs/`。
+
+### Day 1 · 工程骨架
+- [x] Docker MySQL 8（宿主映射 3307，避开本机 3306）
+- [x] FastAPI + SQLAlchemy 2.0 骨架、10 张表 ORM、`GET /api/health`
+- [x] bcrypt + JWT 登录（默认账号 `admin` / `admin123`）
+- [x] 执行引擎复用：`variable_resolver` / `assertion_engine` / `api_executor`
+- [x] Vue3 + Element Plus 前端骨架、设计令牌、AppLayout、路由与 axios 封装
+
+### Day 2 · 核心 CRUD 与接口执行闭环
+- [x] 项目 / 环境 / 用例三套 CRUD（含全局变量行编辑）
+- [x] 接口执行闭环：建项目 → 建环境 → 建用例 → 执行 → 看结果
+- [x] 一键验收脚本 `backend/scripts/verify_all.py`
+
+### Day 3 · 执行中心 / 报告 / 用例串联
+- [x] 执行中心页（项目与状态筛选、统计卡片、详情抽屉）
+- [x] 测试报告 HTML 生成（与旧桌面版输出物理隔离到 `reports/platform/`）
+- [x] 变量提取 `extract_json`、场景串联（`scenario` / `scenario_step`）
+- [x] 数据驱动（CSV / Excel 参数化，按行执行）
+
+### Day 4 · Web UI 执行
+- [x] Selenium 执行层迁入服务化（`browser_manager` / `web_executor`）
+- [x] Web 步骤编排器 + 执行闭环 + 失败自动截图
+- [x] **修掉旧桌面版 `_capture_screenshot()` 从未生效的老 bug**
+      （`self.screenshots` 未初始化，异常被 `except Exception: pass` 吞掉）
+- [x] 一键启停 `start.bat` / `stop.bat`
+
+### Day 5 · 测试计划
+- [x] 测试计划：一组用例 + 一个环境，一键批量执行并汇总
+- [x] `test_plan.case_ids_json`（无外键的 JSON 数组）改关联表 `test_plan_case`，
+      删用例时关联级联清理
+
+### Day 6 · 用例拆分 / 操作补全 / 视觉改版
+- [x] 用例按类型拆成「接口测试」+「UI 测试」两条独立线路：
+      各自菜单、列表与**全屏编辑页**，编辑器不再有类型下拉
+- [x] Web 步骤操作 **15 → 31 种**，按导航/鼠标/表单/弹窗/等待/滚动/断言/其他分 8 组；
+      字段规格（`ACTION_SPEC`）由后端声明并下发，前端照着渲染
+- [x] 新增操作补齐了旧版做不了的场景：下拉框选择（原生 select 点不开）、
+      上传文件、键盘按键、悬停、拖拽、弹窗处理（alert/confirm/prompt）、
+      等待元素消失、刷新/后退、滚动到底部、断言 URL/数量/属性
+- [x] 步骤编排交互重做：分组添加面板、**拖拽排序**（补回旧桌面版有、新版丢掉的能力）、
+      折叠、复制、校验失败高亮到具体步骤
+- [x] **修掉「弹窗确认 / 取消」永远不生效的 bug** —— Selenium 4 默认
+      `unhandledPromptBehavior=dismiss`，会在点击后那段 execute_script 撞上弹窗时
+      把它自动关掉，且不报错
+- [x] 视觉改版：现代 SaaS 卡片化（品牌青蓝侧栏、三段式列表页、统计卡重做）
+
+### 验收规模
+
+| 阶段 | 验收项数 |
+|---|---|
+| Day 2 | 23 |
+| Day 3 | 62 |
+| Day 4 | 82 |
+| Day 5 | 98 |
+| Day 6 | **122（全过）** |
+
+### 已知未做（v2.0.0 范围内）
+
+- [ ] 全站接口未校验 JWT（登录能签发，后端没有一处 `Depends`）
+- [ ] 缺陷管理 / AI 助手 / 设置三个页面仍是占位
+- [ ] 列表没有分页（接口一次性返回全部）
+- [ ] Web 用例不支持场景串联与数据驱动
+
+---
+
+## v1.0.0 (2026-06-27) — 桌面版：基础框架 + 全功能 MVP ⏸已冻结
+
+> PySide6 桌面应用，功能已冻结，源码保留作为执行引擎的复用来源。
 
 ### Phase 1: 基础框架
 - [x] 项目目录结构搭建
