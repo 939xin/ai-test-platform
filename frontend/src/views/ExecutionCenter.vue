@@ -125,7 +125,7 @@ onMounted(async () => {
         </el-button>
       </div>
 
-      <el-table v-loading="loading" :data="executions" stripe>
+      <el-table v-loading="loading" :data="executions">
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">

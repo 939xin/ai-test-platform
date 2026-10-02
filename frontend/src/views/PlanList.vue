@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import PlanEditorDrawer from '@/components/PlanEditorDrawer.vue'
@@ -77,7 +77,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <div class="page-stack">
     <PageHeader title="测试计划" description="挑一组用例绑定环境，一键批量执行，跑完统计通过情况">
       <el-select
         v-model="currentProjectId"
@@ -93,7 +93,12 @@ onMounted(async () => {
     </PageHeader>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="plans" stripe>
+      <div class="card-tools">
+        <span>共 {{ plans.length }} 个计划</span>
+        <el-button link :icon="Refresh" @click="loadPlans">刷新</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="plans">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="计划名称" min-width="200" />
         <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip>

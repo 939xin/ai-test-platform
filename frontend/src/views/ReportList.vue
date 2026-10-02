@@ -91,7 +91,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <div class="page-stack">
     <PageHeader title="测试报告" description="勾选执行记录生成 HTML 报告，可在新标签页打开">
       <el-select
         v-model="currentProjectId"
@@ -105,7 +105,7 @@ onMounted(async () => {
       <el-button :icon="Refresh" @click="refresh">刷新</el-button>
     </PageHeader>
 
-    <el-card shadow="never" class="section">
+    <el-card shadow="never">
       <template #header>
         <div class="card-head">
           <span class="card-title">选择执行记录</span>
@@ -115,7 +115,6 @@ onMounted(async () => {
 
       <el-table
         :data="executions"
-        stripe
         max-height="300"
         @selection-change="(rows) => (selectedIds = rows.map((r) => r.id))"
       >
@@ -168,7 +167,7 @@ onMounted(async () => {
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="reports" stripe>
+      <el-table v-loading="loading" :data="reports">
         <el-table-column prop="filename" label="报告文件" min-width="280" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="mono">{{ row.filename }}</span>
@@ -198,10 +197,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.section {
-  margin-bottom: 14px;
-}
-
 .card-head {
   display: flex;
   align-items: baseline;

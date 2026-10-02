@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import ScenarioEditorDrawer from '@/components/ScenarioEditorDrawer.vue'
@@ -77,7 +77,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <div class="page-stack">
     <PageHeader title="场景测试" description="把多条用例串成链路，上一步提取的变量传给下一步">
       <el-select
         v-model="currentProjectId"
@@ -93,7 +93,12 @@ onMounted(async () => {
     </PageHeader>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="scenarios" stripe>
+      <div class="card-tools">
+        <span>共 {{ scenarios.length }} 个场景</span>
+        <el-button link :icon="Refresh" @click="loadScenarios">刷新</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="scenarios">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="场景名称" min-width="200" />
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip>

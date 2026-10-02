@@ -65,6 +65,37 @@ body {
   padding: 18px 20px;
 }
 
+/* 页面内的分段布局：页头 / 筛选卡 / 内容卡 依次竖排，用统一间距隔开。
+   段与段之间靠留白区分，比塞进同一张卡里靠内部横线区隔更清楚。 */
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 筛选工具栏那张卡：只是几条控件，内边距收紧，别和内容卡一样厚 */
+.el-card.card-filter .el-card__body {
+  padding: 14px 20px;
+}
+
+/* 筛选控件一行排开，窄屏可换行 */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 表格卡右上角的小工具（如「共 N 条」） */
+.card-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
 /* ---------- 表格：加大行距、去掉竖线，表头用浅底 ---------- */
 .el-table {
   --el-table-border-color: #eef2f3;

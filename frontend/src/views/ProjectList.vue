@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { createProject, deleteProject, listProjects, updateProject } from '@/api/project'
@@ -80,13 +80,18 @@ onMounted(load)
 </script>
 
 <template>
-  <div>
+  <div class="page-stack">
     <PageHeader title="项目管理" description="创建和管理测试项目，查看用例数、执行数与通过率">
       <el-button type="primary" :icon="Plus" @click="openCreate">新建项目</el-button>
     </PageHeader>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="projects" stripe>
+      <div class="card-tools">
+        <span>共 {{ projects.length }} 个项目</span>
+        <el-button link :icon="Refresh" @click="load">刷新</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="projects">
         <el-table-column prop="id" label="ID" width="72" />
         <el-table-column prop="name" label="项目名称" min-width="180" />
         <el-table-column prop="description" label="描述" min-width="240" show-overflow-tooltip>

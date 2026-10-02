@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { listProjects } from '@/api/project'
@@ -120,7 +120,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <div class="page-stack">
     <PageHeader title="环境变量" description="每个项目下的 dev / test / prod 环境，配置 Base URL 与全局变量">
       <el-select
         v-model="currentProjectId"
@@ -136,7 +136,12 @@ onMounted(async () => {
     </PageHeader>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="environments" stripe>
+      <div class="card-tools">
+        <span>共 {{ environments.length }} 个环境</span>
+        <el-button link :icon="Refresh" @click="loadEnvironments">刷新</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="environments">
         <el-table-column prop="id" label="ID" width="72" />
         <el-table-column prop="name" label="环境名" width="140" />
         <el-table-column prop="base_url" label="Base URL" min-width="280">

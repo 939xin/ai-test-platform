@@ -8,7 +8,7 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search } from '@element-plus/icons-vue'
+import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import RunCaseDialog from '@/components/RunCaseDialog.vue'
@@ -110,7 +110,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <div class="page-stack">
     <PageHeader title="UI 测试" description="Web 用例：按步骤编排浏览器操作，支持变量传递与失败自动截图">
       <el-select
         v-model="currentProjectId"
@@ -125,7 +125,7 @@ onMounted(async () => {
       </el-button>
     </PageHeader>
 
-    <el-card shadow="never">
+    <el-card class="card-filter" shadow="never">
       <div class="filter-bar">
         <el-select v-model="filters.priority" placeholder="全部优先级" clearable style="width: 140px">
           <el-option v-for="p in ['P0', 'P1', 'P2']" :key="p" :label="p" :value="p" />
@@ -140,8 +140,15 @@ onMounted(async () => {
         <el-button type="primary" :icon="Search" @click="loadCases">查询</el-button>
         <el-button @click="resetFilters">重置</el-button>
       </div>
+    </el-card>
 
-      <el-table v-loading="loading" :data="cases" stripe>
+    <el-card shadow="never">
+      <div class="card-tools">
+        <span>共 {{ cases.length }} 条 UI 用例</span>
+        <el-button link :icon="Refresh" @click="loadCases">刷新</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="cases">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="用例名称" min-width="220" />
         <el-table-column prop="priority" label="优先级" width="90" />
@@ -190,12 +197,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.filter-bar {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
 .is-zero {
   color: var(--text-3);
 }
