@@ -4,7 +4,7 @@
 """
 from app.models.core import Environment, Project, User
 from app.models.execution import AITask, Defect, Execution
-from app.models.testcase import Scenario, ScenarioStep, TestCase, TestPlan
+from app.models.testcase import Scenario, ScenarioStep, TestCase, TestPlan, TestPlanCase
 
 __all__ = [
     "User",
@@ -14,6 +14,7 @@ __all__ = [
     "Scenario",
     "ScenarioStep",
     "TestPlan",
+    "TestPlanCase",
     "Execution",
     "Defect",
     "AITask",

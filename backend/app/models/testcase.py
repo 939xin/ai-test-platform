@@ -1,4 +1,4 @@
-"""用例与场景：TestCase、Scenario、ScenarioStep、TestPlan。
+"""用例、场景与计划：TestCase、Scenario、ScenarioStep、TestPlan、TestPlanCase。
 
 旧库的 api_headers / api_assertions / web_steps / web_step_locators
 四张子表在这里合并成 TestCase 的 JSON 字段，避免大量 join。
@@ -86,7 +86,11 @@ class ScenarioStep(Base):
 
 
 class TestPlan(Base):
-    """测试计划：一组用例 + 一个环境。"""
+    """测试计划：一组互不依赖的用例 + 一个默认环境，一键批量执行。
+
+    和 Scenario 的区别：场景讲究顺序、上一步的变量传给下一步；计划里的用例各跑各的，
+    谁先谁后不影响结果，跑完统计通过情况。
+    """
 
     __tablename__ = "test_plan"
 
@@ -95,9 +99,29 @@ class TestPlan(Base):
         ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    case_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     env_id: Mapped[int | None] = mapped_column(
         ForeignKey("environment.id", ondelete="SET NULL"), nullable=True
     )
-    schedule: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+
+
+class TestPlanCase(Base):
+    """计划里的一条用例。
+
+    用关联表而不是往计划里塞一串 id：删用例时能靠外键级联清掉，
+    否则计划里会留下永远跑不通的死 id。
+    """
+
+    __tablename__ = "test_plan_case"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("test_plan.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("test_case.id", ondelete="CASCADE"), nullable=False
+    )
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # 允许在计划里临时停掉某条用例，而不用把它移出去再重新加回来
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

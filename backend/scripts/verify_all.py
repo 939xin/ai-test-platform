@@ -1,10 +1,10 @@
-"""一键验收 — 覆盖 Day 1 ~ Day 4 的全部后端能力。
+"""一键验收 — 覆盖 Day 1 ~ Day 5 的全部后端能力。
 
 用法（在 backend/ 目录下，需后端已启动）：
     venv/Scripts/python.exe scripts/verify_all.py
 
 每个开发阶段结束后跑一次，确认没有回归。
-Day 1-3 段需要外网（httpbin.org）；Day 4 段用后端自带的离线演示页，不依赖外网。
+Day 1-3 段需要外网（httpbin.org）；Day 4-5 段用后端自带的离线演示页，不依赖外网。
 """
 import io
 import shutil
@@ -35,7 +35,7 @@ def section(title: str) -> None:
 
 def main() -> int:
     print("=" * 54)
-    print("  验收：Day 1-3 接口闭环 + Day 4 Web UI 执行")
+    print("  验收：Day 1-3 接口闭环 + Day 4 Web UI 执行 + Day 5 测试计划")
     print("=" * 54)
 
     # ==================== Day 1 ====================
@@ -409,6 +409,7 @@ def main() -> int:
     # 本段跑完要清理的东西：截图按 execution 分目录，得记下来
     web_execution_ids: list[int] = []
     web_report_name = None
+    web_case = None  # 浏览器不可用时整段跳过，先占位，Day 5 段要用
 
     r = requests.get(f"{BASE}/web/status", timeout=15)
     if r.status_code != 200 or not r.json().get("available"):
@@ -569,6 +570,92 @@ def main() -> int:
                 html = requests.get(f"{BASE}/reports/{web_report_name}", timeout=10).text
                 check("Web 报告含步骤描述与截图",
                       "打开 URL" in html and "<img src=" in html and "screenshots/" in html)
+
+    # ==================== Day 5 · 测试计划 ====================
+    section("Day 5 · 测试计划 ★")
+    # 计划用「一组互不依赖的用例 + 一个默认环境」，这里凑一条接口 + 一条 Web
+    plan_case_ids = [case_id] + ([web_case] if web_case else [])
+
+    r = requests.post(f"{BASE}/projects/{pid}/plans", json={
+        "name": "验收计划·混合", "description": "接口 + Web",
+        "env_id": env_id,
+        "cases": [{"case_id": c} for c in plan_case_ids],
+    }, timeout=10)
+    check("新建计划", r.status_code == 201)
+    plan_id = r.json().get("id") if r.status_code == 201 else None
+
+    r = requests.get(f"{BASE}/projects/{pid}/plans", timeout=10)
+    row = next((p for p in r.json() if p["id"] == plan_id), {})
+    check("计划列表带用例数与环境名",
+          row.get("case_count") == len(plan_case_ids) and row.get("env_name") is not None,
+          f"{row.get('case_count')} 条 / 环境 {row.get('env_name')}")
+
+    r = requests.get(f"{BASE}/plans/{plan_id}", timeout=10)
+    detail = r.json()
+    check("计划详情带用例名与类型",
+          len(detail["cases"]) == len(plan_case_ids)
+          and all(c["case_name"] and c["case_type"] for c in detail["cases"]))
+    check("step_order 按提交顺序由后端编号",
+          [c["step_order"] for c in detail["cases"]] == list(range(1, len(plan_case_ids) + 1)))
+
+    r = requests.post(f"{BASE}/plans/{plan_id}/run", json={"timeout": 30}, timeout=600)
+    check("执行计划（接口 + Web 混合）", r.status_code == 200)
+    run = r.json() if r.status_code == 200 else {}
+    if run:
+        check("计划整体通过", run["status"] == "pass",
+              f"通过 {run['passed']}/{run['total']}  {run['total_duration_ms']}ms")
+        # plan_id 这个字段在 Day 4 之前一直是空的，这里钉死它确实写进去了
+        check("每条执行记录都带 plan_id",
+              all(c["plan_id"] == plan_id for c in run["cases"]),
+              str([c["plan_id"] for c in run["cases"]]))
+        history = {e["id"] for e in requests.get(
+            f"{BASE}/executions", params={"project_id": pid}, timeout=10).json()}
+        check("计划产生的执行记录出现在执行中心",
+              all(c["id"] in history for c in run["cases"]))
+        web_execution_ids.extend(c["id"] for c in run["cases"])
+
+    # ---------- 边界 ----------
+    tmp_plan = requests.post(f"{BASE}/projects/{pid}/plans",
+                             json={"name": "验收计划·边界"}, timeout=10).json()["id"]
+
+    r = requests.post(f"{BASE}/plans/{tmp_plan}/run", json={}, timeout=10)
+    check("空计划执行返回 400", r.status_code == 400, r.json().get("detail", ""))
+
+    requests.put(f"{BASE}/plans/{tmp_plan}", json={
+        "cases": [{"case_id": case_id, "enabled": False}]}, timeout=10)
+    r = requests.post(f"{BASE}/plans/{tmp_plan}/run", json={}, timeout=10)
+    check("用例全停用时执行返回 400", r.status_code == 400, r.json().get("detail", ""))
+
+    # 停用的用例只计数、不执行（同一条用例挂两条，其中一条停用）
+    requests.put(f"{BASE}/plans/{tmp_plan}", json={
+        "cases": [{"case_id": case_id, "enabled": True},
+                  {"case_id": case_id, "enabled": False}]}, timeout=10)
+    r = requests.post(f"{BASE}/plans/{tmp_plan}/run", json={"timeout": 30}, timeout=120)
+    run2 = r.json()
+    check("停用的用例被跳过并计数",
+          r.status_code == 200 and run2["total"] == 1 and run2["skipped"] == 1,
+          f"执行 {run2['total']} 条 / 跳过 {run2['skipped']} 条")
+    web_execution_ids.extend(c["id"] for c in run2["cases"])
+
+    r = requests.get(f"{BASE}/plans/999999", timeout=10)
+    check("不存在的计划返回 404", r.status_code == 404)
+    r = requests.delete(f"{BASE}/plans/{tmp_plan}", timeout=10)
+    check("删除计划", r.status_code == 204)
+    r = requests.get(f"{BASE}/plans/{tmp_plan}", timeout=10)
+    check("删除后计划查不到（404）", r.status_code == 404)
+
+    # 删用例时计划里的关联被外键级联清掉 —— 这正是用关联表而不是 JSON 串的理由
+    doomed = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        "name": "验收·待删用例", "type": "api",
+        "method": "GET", "url": "https://httpbin.org/status/204"}, timeout=10).json()["id"]
+    r = requests.put(f"{BASE}/plans/{plan_id}", json={
+        "cases": [{"case_id": c} for c in plan_case_ids] + [{"case_id": doomed}]}, timeout=10)
+    check("计划加入一条临时用例", len(r.json()["cases"]) == len(plan_case_ids) + 1)
+    requests.delete(f"{BASE}/cases/{doomed}", timeout=10)
+    r = requests.get(f"{BASE}/plans/{plan_id}", timeout=10)
+    check("用例被删后，计划里的关联自动清掉（外键级联）",
+          len(r.json()["cases"]) == len(plan_case_ids),
+          f"剩 {len(r.json()['cases'])} 条")
 
     # ==================== 清理 ====================
     section("清理验收数据")

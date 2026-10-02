@@ -29,11 +29,13 @@ from app.services.dataset import load_rows
 router = APIRouter()
 
 
-def _case_to_dict(case) -> dict:
+def case_to_dict(case) -> dict:
     """把 ORM 用例转成执行引擎认识的字典。
 
     接口执行只读前 9 个键；type / steps_json 是给 Web 执行引擎用的，
     多带两个键对接口用例没有影响。
+
+    公开函数：api/plans.py 批量执行计划时复用同一套转换。
     """
     return {
         "type": case.type,
@@ -50,7 +52,8 @@ def _case_to_dict(case) -> dict:
     }
 
 
-def _env_to_dict(env) -> dict:
+def env_to_dict(env) -> dict:
+    """环境转成执行引擎认识的字典（公开函数，plans.py 复用）。"""
     return {
         "name": env.name,
         "base_url": env.base_url,
@@ -65,7 +68,8 @@ def _case_names(db: Session, case_ids: set[int]) -> dict[int, str]:
     return dict(db.execute(select(TestCase.id, TestCase.name).where(TestCase.id.in_(case_ids))).all())
 
 
-def _execution_out(execution: Execution, case_name: str | None) -> ExecutionOut:
+def execution_out(execution: Execution, case_name: str | None) -> ExecutionOut:
+    """执行记录转成响应模型（公开函数，api/plans.py 复用）。"""
     return ExecutionOut(
         id=execution.id,
         project_id=execution.project_id,
@@ -96,7 +100,7 @@ def run_case(
 
     env_dict: dict = {}
     if payload.env_id is not None:
-        env_dict = _env_to_dict(get_environment_or_404(db, payload.env_id))
+        env_dict = env_to_dict(get_environment_or_404(db, payload.env_id))
 
     # 先落一条 running 记录，执行完再更新，保证异常时也有痕迹
     execution = Execution(
@@ -109,7 +113,7 @@ def run_case(
     db.commit()
     db.refresh(execution)
 
-    result = execute_case(_case_to_dict(case), env_dict, timeout=payload.timeout)
+    result = execute_case(case_to_dict(case), env_dict, timeout=payload.timeout)
 
     execution.status = result["status"]
     execution.end_time = datetime.now()
@@ -151,7 +155,7 @@ def run_web_case(
 
     env_dict: dict = {}
     if payload.env_id is not None:
-        env_dict = _env_to_dict(get_environment_or_404(db, payload.env_id))
+        env_dict = env_to_dict(get_environment_or_404(db, payload.env_id))
 
     execution = Execution(
         project_id=case.project_id,
@@ -166,7 +170,7 @@ def run_web_case(
     # 截图按执行记录分目录，文件名全 ASCII，避开中文路径在驱动侧的各种坑
     shot_dir = Path(settings.report_dir) / "screenshots" / f"execution_{execution.id}"
     result = web_executor.execute_case(
-        _case_to_dict(case), env_dict,
+        case_to_dict(case), env_dict,
         browser=payload.browser,
         headless=payload.headless,
         timeout=payload.timeout,
@@ -214,7 +218,7 @@ def run_case_data_driven(
 
     env_dict: dict = {}
     if payload.env_id is not None:
-        env_dict = _env_to_dict(get_environment_or_404(db, payload.env_id))
+        env_dict = env_to_dict(get_environment_or_404(db, payload.env_id))
     global_vars = env_dict.get("variables_json") or {}
 
     results: list[ExecutionOut] = []
@@ -231,7 +235,7 @@ def run_case_data_driven(
 
         # 行数据覆盖全局变量：{**全局, **当前行}
         merged_env = {**env_dict, "variables_json": {**global_vars, **row}}
-        result = execute_case(_case_to_dict(case), merged_env, timeout=payload.timeout)
+        result = execute_case(case_to_dict(case), merged_env, timeout=payload.timeout)
         result["row_index"] = index
         result["row_data"] = row
 
@@ -242,7 +246,7 @@ def run_case_data_driven(
         db.commit()
         db.refresh(execution)
 
-        results.append(_execution_out(execution, case.name))
+        results.append(execution_out(execution, case.name))
 
     return DataDrivenRunResult(
         case_id=case.id,
@@ -295,4 +299,4 @@ def get_execution(execution_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="执行记录不存在")
 
     name_map = _case_names(db, {execution.case_id} if execution.case_id else set())
-    return _execution_out(execution, name_map.get(execution.case_id))
+    return execution_out(execution, name_map.get(execution.case_id))

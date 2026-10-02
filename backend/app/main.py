@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app.api import (
-    auth, cases, datasets, environments, executions, health, projects, reports, scenarios, web,
+    auth, cases, datasets, environments, executions, health, plans, projects, reports, scenarios, web,
 )
 from app.config import settings
 
@@ -54,6 +54,7 @@ app.include_router(cases.router, prefix="/api", tags=["cases"])
 app.include_router(executions.router, prefix="/api", tags=["executions"])
 app.include_router(reports.router, prefix="/api", tags=["reports"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
+app.include_router(plans.router, prefix="/api", tags=["plans"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
 app.include_router(web.router, prefix="/api", tags=["web"])
 
