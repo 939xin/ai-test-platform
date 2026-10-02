@@ -114,12 +114,11 @@ onMounted(checkHealth)
   overflow: hidden;
 }
 
-/* ---------- 侧栏：浅色，与内容区同一套底色体系 ---------- */
+/* ---------- 侧栏：品牌深青蓝，整页的颜色锚点 ---------- */
 .sider {
   width: var(--sider-width);
   flex-shrink: 0;
-  background: var(--sider-bg);
-  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--sider-bg-top), var(--sider-bg));
   display: flex;
   flex-direction: column;
 }
@@ -130,7 +129,7 @@ onMounted(checkHealth)
   align-items: center;
   gap: 10px;
   padding: 0 18px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--sider-divider);
 }
 
 .brand-mark {
@@ -140,14 +139,14 @@ onMounted(checkHealth)
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: var(--brand-700);
+  background: rgba(255, 255, 255, 0.16);
   color: #fff;
   font-size: 15px;
   font-weight: 700;
 }
 
 .brand-text {
-  color: var(--text-1);
+  color: #fff;
   font-size: 15px;
   font-weight: 600;
 }
@@ -156,6 +155,15 @@ onMounted(checkHealth)
   flex: 1;
   padding: 12px 12px;
   overflow-y: auto;
+}
+
+/* 深底上的滚动条用全局那根浅灰会很突兀 */
+.nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
 }
 
 .nav-item {
@@ -173,20 +181,20 @@ onMounted(checkHealth)
 
 .nav-item:hover {
   background: var(--sider-hover);
-  color: var(--text-1);
+  color: #fff;
 }
 
-/* 选中项：品牌色浅底 + 品牌色字，比深色侧栏上那块高亮更轻 */
+/* 选中项：品牌青底 + 白字，在深侧栏上是「亮起来」而不是「压下去」 */
 .nav-item.router-link-active,
 .nav-item.nav-active {
   background: var(--sider-active-bg);
-  color: var(--sider-active-text);
+  color: #fff;
   font-weight: 600;
 }
 
 .sider-foot {
   padding: 12px 16px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--sider-divider);
 }
 
 .conn {
@@ -198,7 +206,7 @@ onMounted(checkHealth)
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: var(--text-3);
+  color: var(--sider-text);
   font-family: var(--font-ui);
   font-size: 12px;
   cursor: pointer;
@@ -217,10 +225,11 @@ onMounted(checkHealth)
   background: var(--signal-skip);
 }
 
-.conn--ok .dot { background: var(--signal-pass); }
-.conn--warn .dot { background: var(--signal-warn); }
-.conn--down .dot { background: var(--signal-fail); }
-.conn--ok { color: var(--signal-pass); }
+/* 深底上信号色要提亮一档，否则 #2e9e6b 这种深绿几乎看不见 */
+.conn--ok .dot { background: #4fc48d; }
+.conn--warn .dot { background: #e8ab4d; }
+.conn--down .dot { background: #e87373; }
+.conn--ok { color: #7fd0a6; }
 
 /* ---------- 主区 ---------- */
 .main {

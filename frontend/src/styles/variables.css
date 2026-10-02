@@ -35,13 +35,16 @@
   --text-2: #52646c;
   --text-3: #8a9ba3;
 
-  /* ---------- 侧栏：改浅色，与内容区统一 ---------- */
+  /* ---------- 侧栏：品牌深青蓝 ----------
+     不是上一版那种灰黑（#12232b）—— 用品牌色当锚点，整页才有颜色。
+     顶栏与卡片保持白，深色只出现在这一条全高色块上。 */
   --sider-width: 220px;
-  --sider-bg: #ffffff;
-  --sider-text: #52646c;
-  --sider-hover: #f2f6f7;
-  --sider-active-bg: #e3f2f5;
-  --sider-active-text: #16697a;
+  --sider-bg: #0e3a45;
+  --sider-bg-top: #17434f;      /* 顶部略亮，给深色侧栏一点纵深 */
+  --sider-text: #9fbcc4;
+  --sider-hover: rgba(255, 255, 255, 0.07);
+  --sider-active-bg: #16697a;
+  --sider-divider: rgba(255, 255, 255, 0.09);
 
   /* ---------- 阴影：三层，越靠上的元素阴影越大 ---------- */
   --shadow-card: 0 1px 2px rgba(16, 32, 40, 0.04), 0 2px 8px rgba(16, 32, 40, 0.05);
