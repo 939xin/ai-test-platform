@@ -3,10 +3,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app.api import (
-    auth, cases, datasets, environments, executions, health, projects, reports, scenarios,
+    auth, cases, datasets, environments, executions, health, projects, reports, scenarios, web,
 )
 from app.config import settings
 
@@ -54,3 +55,8 @@ app.include_router(executions.router, prefix="/api", tags=["executions"])
 app.include_router(reports.router, prefix="/api", tags=["reports"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
+app.include_router(web.router, prefix="/api", tags=["web"])
+
+# Web UI 测试的离线演示页。挂在 /api 之下，前端 vite proxy 和验收脚本的 BASE
+# 都不需要额外配置；StaticFiles 自带路径穿越防护，且演示页只读。
+app.mount("/api/demo", StaticFiles(directory=settings.demo_dir, html=True), name="demo")

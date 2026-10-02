@@ -80,7 +80,7 @@ onMounted(async () => {
 
 <template>
   <div>
-    <PageHeader title="执行中心" description="历史执行记录，点「查看」可看请求 / 响应 / 断言明细">
+    <PageHeader title="执行中心" description="历史执行记录，点「查看」可看请求 / 响应 / 断言，或 Web 用例的步骤明细">
       <el-select
         v-model="currentProjectId"
         placeholder="选择项目"

@@ -4,6 +4,7 @@
 执行引擎的断言与请求构造逻辑复用自既有项目，本身不依赖框架。
 """
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -11,9 +12,17 @@ from sqlalchemy.orm import Session
 
 from app.api.cases import get_case_or_404
 from app.api.environments import get_environment_or_404
+from app.config import settings
 from app.database import get_db
 from app.models import Execution, TestCase
-from app.schemas.execution import DataDrivenRunResult, ExecutionBrief, ExecutionOut, RunCaseRequest
+from app.schemas.execution import (
+    DataDrivenRunResult,
+    ExecutionBrief,
+    ExecutionOut,
+    RunCaseRequest,
+    RunWebRequest,
+)
+from app.services import web_executor
 from app.services.api_executor import execute_case
 from app.services.dataset import load_rows
 
@@ -21,8 +30,13 @@ router = APIRouter()
 
 
 def _case_to_dict(case) -> dict:
-    """把 ORM 用例转成执行引擎认识的字典。"""
+    """把 ORM 用例转成执行引擎认识的字典。
+
+    接口执行只读前 9 个键；type / steps_json 是给 Web 执行引擎用的，
+    多带两个键对接口用例没有影响。
+    """
     return {
+        "type": case.type,
         "method": case.method,
         "url": case.url,
         "headers_json": case.headers_json or {},
@@ -32,6 +46,7 @@ def _case_to_dict(case) -> dict:
         "auth_value": case.auth_value,
         "assertions_json": case.assertions_json or [],
         "extract_json": case.extract_json or [],
+        "steps_json": case.steps_json or [],
     }
 
 
@@ -95,6 +110,69 @@ def run_case(
     db.refresh(execution)
 
     result = execute_case(_case_to_dict(case), env_dict, timeout=payload.timeout)
+
+    execution.status = result["status"]
+    execution.end_time = datetime.now()
+    execution.duration_ms = result["duration_ms"]
+    execution.result_json = result
+    db.commit()
+    db.refresh(execution)
+
+    return execution
+
+
+@router.post(
+    "/cases/{case_id}/run-web",
+    response_model=ExecutionOut,
+    summary="执行单条 Web UI 用例",
+)
+def run_web_case(
+    case_id: int,
+    payload: RunWebRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    """执行 Web 用例：起浏览器 → 逐步执行 steps_json → 截图落盘 → 结果落库。
+
+    浏览器起不来时**依然返回 200 并落一条 status=error 的执行记录**（错误原因写在
+    result_json.error_msg），与接口侧「执行记录一定留有痕迹」的风格保持一致，
+    也方便前端在执行详情里直接看到失败原因。
+    """
+    case = get_case_or_404(db, case_id)
+    payload = payload or RunWebRequest()
+
+    if case.type != "web":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="该用例不是 Web UI 用例（type=api），请用 /run 执行")
+
+    # 编辑阶段允许先存草稿，真正执行时才要求有步骤
+    if not [s for s in (case.steps_json or []) if s.get("enabled", True)]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="该用例还没有配置可执行的 Web 步骤")
+
+    env_dict: dict = {}
+    if payload.env_id is not None:
+        env_dict = _env_to_dict(get_environment_or_404(db, payload.env_id))
+
+    execution = Execution(
+        project_id=case.project_id,
+        case_id=case.id,
+        status="running",
+        start_time=datetime.now(),
+    )
+    db.add(execution)
+    db.commit()
+    db.refresh(execution)
+
+    # 截图按执行记录分目录，文件名全 ASCII，避开中文路径在驱动侧的各种坑
+    shot_dir = Path(settings.report_dir) / "screenshots" / f"execution_{execution.id}"
+    result = web_executor.execute_case(
+        _case_to_dict(case), env_dict,
+        browser=payload.browser,
+        headless=payload.headless,
+        timeout=payload.timeout,
+        screenshot_dir=str(shot_dir),
+        screenshot_root=settings.report_dir,
+    )
 
     execution.status = result["status"]
     execution.end_time = datetime.now()

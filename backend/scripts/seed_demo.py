@@ -1,7 +1,11 @@
 """演示数据种子。
 
-造一个可直接演示的项目：httpbin 环境 + 用例（含 1 条故意失败）+ 场景串联 + 数据驱动
-+ 若干执行记录。可重复执行：已存在同名项目时复用，不会重复建项目。
+造一个可直接演示的项目：httpbin 环境 + 接口用例（含 1 条故意失败）+ 场景串联
++ 数据驱动 + Web UI 用例 + 若干执行记录。
+可重复执行：已存在同名项目时复用，不会重复建项目。
+
+Web 用例的靶页是后端自带的离线演示页（httpbin 没有 UI，测不了 Web），不依赖外网；
+本机没有可用浏览器时只建用例、不执行，避免演示数据里留下 error 记录。
 
 用法：backend> venv/Scripts/python.exe scripts/seed_demo.py
 """
@@ -103,9 +107,59 @@ CASES = [
     },
 ]
 
+# Web 用例的靶页：后端静态托管的离线演示页（httpbin 没有 UI，测不了 Web）
+DEMO_URL = "http://127.0.0.1:8000/api/demo/index.html"
+
+# Web 用例：步骤写在 steps_json 里，字段名必须与 services/web_executor.py 读取的一致
+WEB_CASES = [
+    {
+        "name": "Web·登录演示页并断言欢迎语",
+        "type": "web",
+        "priority": "P1",
+        "tags": "演示,Web",
+        "steps_json": [
+            {"step_order": 1, "action_type": "open_url", "input_value": DEMO_URL},
+            {"step_order": 2, "action_type": "input", "input_value": "admin",
+             "locator_type": "id", "locator_value": "username"},
+            {"step_order": 3, "action_type": "input", "input_value": "secret",
+             "locator_type": "id", "locator_value": "password"},
+            {"step_order": 4, "action_type": "click",
+             "locator_type": "id", "locator_value": "login-btn"},
+            # 提取页面上的欢迎语，演示 Web 侧的步骤间传参
+            {"step_order": 5, "action_type": "extract_variable", "input_value": "welcome_text",
+             "locator_type": "id", "locator_value": "welcome"},
+            {"step_order": 6, "action_type": "assert_text_contains", "input_value": "欢迎 admin",
+             "locator_type": "id", "locator_value": "welcome"},
+            {"step_order": 7, "action_type": "screenshot", "input_value": "login-demo"},
+        ],
+    },
+    {
+        # 断言必然失败 —— 演示失败态，顺带展示「失败自动截图」
+        "name": "Web·断言失败演示（预期失败）",
+        "type": "web",
+        "priority": "P2",
+        "tags": "演示,Web",
+        "steps_json": [
+            {"step_order": 1, "action_type": "open_url", "input_value": DEMO_URL},
+            {"step_order": 2, "action_type": "assert_text_contains",
+             "input_value": "页面里绝对没有这句话",
+             "locator_type": "id", "locator_value": "status"},
+        ],
+    },
+]
+
 # 场景：步骤 1 提取变量，步骤 2 直接引用它 —— 演示「用例之间传参」
 SCENARIO_NAME = "演示场景：提取 url → 引用 url"
 SCENARIO_STEPS = ["GET /get 连通性检查", "串联·引用上一步提取的 url"]
+
+
+def _web_available() -> tuple[bool, str]:
+    """探测本机浏览器是否可用。不可用就只建 Web 用例、不执行它。"""
+    try:
+        data = requests.get(f"{BASE}/web/status", timeout=15).json()
+    except Exception as e:  # 探测失败按「不可用」处理，不阻断种子其余部分
+        return False, f"{type(e).__name__}: {e}"
+    return bool(data.get("available")), data.get("error", "")
 
 
 def main() -> int:
@@ -136,13 +190,17 @@ def main() -> int:
         print(f"  环境 httpbin (id={env['id']})")
     env_id = env["id"]
 
-    # 3. 用例：同名则「收敛到本脚本的定义」（PUT 覆盖），避免重复执行时堆副本，
+    # 3. 用例（接口 + Web）：同名则「收敛到本脚本的定义」（PUT 覆盖），避免重复执行时堆副本，
     #    也保证旧数据里缺的提取规则能被补上 —— 否则场景串联会跑不通
+    specs = CASES + WEB_CASES
     current = requests.get(f"{BASE}/projects/{pid}/cases", timeout=10).json()
     case_ids: list[int] = []
-    for spec in CASES:
-        payload = {"type": "api", "body_type": "", "body_content": ""}
-        payload.update({k: v for k, v in spec.items() if k != "skip_standalone"})
+    for spec in specs:
+        if spec.get("type") == "web":
+            payload = {"type": "web"}
+        else:
+            payload = {"type": "api", "body_type": "", "body_content": ""}
+        payload.update({k: v for k, v in spec.items() if k not in ("skip_standalone", "type")})
         found = next((c for c in current if c["name"] == spec["name"]), None)
         if found:
             r = requests.put(f"{BASE}/cases/{found['id']}", json=payload, timeout=10)
@@ -157,10 +215,28 @@ def main() -> int:
 
     # 4. 执行一遍，留下历史记录（依赖场景变量的用例跳过，见 skip_standalone）
     print("\n执行用例：")
-    for spec, cid in zip(CASES, case_ids):
+    web_ok, web_detail = _web_available()
+    for spec, cid in zip(specs, case_ids):
         if spec.get("skip_standalone"):
             print(f"  跳过 {spec['name']}（需在场景/数据驱动下执行）")
             continue
+
+        if spec.get("type") == "web":
+            if not web_ok:
+                print(f"  跳过 {spec['name']}（本机没有可用浏览器：{web_detail}）")
+                continue
+            r = requests.post(f"{BASE}/cases/{cid}/run-web",
+                              json={"browser": "chrome", "headless": True, "timeout": 180},
+                              timeout=300)
+            if r.status_code != 200:
+                print(f"  用例 {cid} 执行失败：HTTP {r.status_code}")
+                continue
+            ex = r.json()
+            steps = ex["result_json"].get("steps", [])
+            n_pass = sum(1 for s in steps if s["status"] == "pass")
+            print(f"  执行 #{ex['id']}  {ex['status']:<5} {ex['duration_ms']:>5}ms  步骤 {n_pass}/{len(steps)}")
+            continue
+
         r = requests.post(f"{BASE}/cases/{cid}/run", json={"env_id": env_id, "timeout": 30}, timeout=60)
         if r.status_code != 200:
             print(f"  用例 {cid} 执行失败：HTTP {r.status_code}")
@@ -171,7 +247,7 @@ def main() -> int:
         print(f"  执行 #{ex['id']}  {ex['status']:<5} {ex['duration_ms']:>5}ms  断言 {n_pass}/{n_all}")
 
     # 5. 数据文件（同名则覆盖重传）
-    by_name = {spec["name"]: cid for spec, cid in zip(CASES, case_ids)}
+    by_name = {spec["name"]: cid for spec, cid in zip(specs, case_ids)}
     existing_ds = requests.get(f"{BASE}/projects/{pid}/datasets", timeout=10).json()
     if any(d["filename"] == DATA_FILE_NAME for d in existing_ds):
         requests.delete(f"{BASE}/projects/{pid}/datasets/{DATA_FILE_NAME}", timeout=10)

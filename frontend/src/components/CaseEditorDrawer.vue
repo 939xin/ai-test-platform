@@ -3,8 +3,10 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import DatasetManagerDialog from '@/components/DatasetManagerDialog.vue'
+import WebStepEditor from '@/components/WebStepEditor.vue'
 import { createCase, getCase, updateCase } from '@/api/case'
 import { listDatasets } from '@/api/dataset'
+import { getWebStatus } from '@/api/web'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -28,6 +30,13 @@ const activeTab = ref('request')
 // 当前项目的数据文件（供「数据文件」下拉选择）
 const datasets = ref([])
 const datasetDialogVisible = ref(false)
+
+// Web 用例的步骤编排器（提交前要调它的 validate）
+const stepEditorRef = ref(null)
+// 浏览器探测结果与枚举：{ available, error, actions, locators }，切到 Web 类型时才拉
+const webInfo = ref(null)
+const webActions = computed(() => webInfo.value?.actions || [])
+const webLocators = computed(() => webInfo.value?.locators || [])
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
 const BODY_TYPES = [
@@ -80,12 +89,17 @@ const form = reactive({
   assertions: [],
   extracts: [],
   data_file: '',
+  steps: [],
 })
 
-const rules = {
-  name: [{ required: true, message: '请输入用例名称', trigger: 'blur' }],
-  url: [{ required: true, message: '请输入请求 URL', trigger: 'blur' }],
-}
+// Web 用例的 URL 写在步骤里，主表单的 url 不参与校验
+const rules = computed(() => {
+  const base = { name: [{ required: true, message: '请输入用例名称', trigger: 'blur' }] }
+  if (form.type === 'api') {
+    base.url = [{ required: true, message: '请输入请求 URL', trigger: 'blur' }]
+  }
+  return base
+})
 
 function resetForm() {
   Object.assign(form, {
@@ -104,8 +118,15 @@ function resetForm() {
     assertions: [{ assertion_type: 'status_code', operator: 'eq', target: '', expected_value: '200' }],
     extracts: [],
     data_file: '',
+    steps: [],
   })
   activeTab.value = 'request'
+}
+
+/** 首次需要时拉一次浏览器探测结果（含操作 / 定位枚举），之后复用。 */
+async function ensureWebInfo() {
+  if (webInfo.value) return
+  webInfo.value = await getWebStatus()
 }
 
 async function loadDatasets() {
@@ -146,7 +167,10 @@ async function load() {
       assertions: (data.assertions_json || []).map((a) => ({ ...a })),
       extracts: (data.extract_json || []).map((e) => ({ ...e })),
       data_file: data.data_file || '',
+      steps: (data.steps_json || []).map((s) => ({ ...s })),
     })
+    // 打开的是 Web 用例就要立刻有枚举可用，否则步骤卡片的下拉是空的
+    if (data.type === 'web') await ensureWebInfo()
   } finally {
     loading.value = false
   }
@@ -161,8 +185,33 @@ function rowsToObject(rows) {
   return obj
 }
 
+/**
+ * 把编辑器里的步骤整理成后端 WebStep 认识的形状。
+ * step_order 按数组下标重排 —— 用户上下移之后，序号必须跟着位置走。
+ */
+function normalizeStep(step, index) {
+  return {
+    step_order: index + 1,
+    enabled: step.enabled !== false,
+    action_type: step.action_type,
+    input_value: String(step.input_value ?? ''),
+    wait_seconds: Number(step.wait_seconds) || 0,
+    description: String(step.description ?? ''),
+    locator_type: String(step.locator_type ?? ''),
+    locator_value: String(step.locator_value ?? ''),
+  }
+}
+
 async function submit() {
   await formRef.value.validate()
+  if (form.type === 'web') {
+    // 缺定位信息后端会 422，在前端就拦下来并说清是第几步
+    const problem = stepEditorRef.value?.validate()
+    if (problem) {
+      ElMessage.warning(problem)
+      return
+    }
+  }
   submitting.value = true
   try {
     const payload = {
@@ -195,7 +244,10 @@ async function submit() {
           source: e.source || 'body',
           expression: e.source === 'status' ? '' : String(e.expression ?? '').trim(),
         })),
-      data_file: form.data_file || '',
+      // Web 用例的步骤；接口用例一律清空，避免类型切换后留下残留步骤
+      steps_json: form.type === 'web' ? form.steps.map(normalizeStep) : [],
+      // 数据驱动目前只走接口执行器，Web 用例不带数据文件
+      data_file: form.type === 'api' ? form.data_file || '' : '',
     }
     if (isEdit.value) {
       await updateCase(props.caseId, payload)
@@ -214,6 +266,15 @@ async function submit() {
 watch(visible, (open) => {
   if (open) load()
 })
+
+// 切到 Web 类型时把枚举拉回来，并清掉接口字段上残留的校验提示
+watch(
+  () => form.type,
+  (type) => {
+    formRef.value?.clearValidate()
+    if (type === 'web') ensureWebInfo()
+  },
+)
 </script>
 
 <template>
@@ -233,7 +294,7 @@ watch(visible, (open) => {
         <el-form-item label="类型">
           <el-select v-model="form.type">
             <el-option label="接口" value="api" />
-            <el-option label="Web UI" value="web" disabled />
+            <el-option label="Web UI" value="web" />
           </el-select>
         </el-form-item>
         <el-form-item label="优先级">
@@ -247,7 +308,7 @@ watch(visible, (open) => {
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
-        <el-form-item label="数据文件" class="span-2">
+        <el-form-item v-if="form.type === 'api'" label="数据文件" class="span-2">
           <div class="data-file-row">
             <el-select
               v-model="form.data_file"
@@ -268,7 +329,7 @@ watch(visible, (open) => {
         </el-form-item>
       </div>
 
-      <el-tabs v-model="activeTab" class="editor-tabs">
+      <el-tabs v-if="form.type === 'api'" v-model="activeTab" class="editor-tabs">
         <!-- ============ 请求配置 ============ -->
         <el-tab-pane label="请求配置" name="request">
           <el-form-item label="请求" prop="url">
@@ -384,6 +445,24 @@ watch(visible, (open) => {
           </div>
         </el-tab-pane>
       </el-tabs>
+
+      <!-- ============ Web 步骤（仅 Web 用例） ============ -->
+      <div v-else v-loading="!webInfo" class="editor-tabs web-steps">
+        <el-alert
+          v-if="webInfo && !webInfo.available"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="web-alert"
+          :title="`本机检测不到可用的 Chrome / Edge，用例可以编辑，但执行会失败：${webInfo.error}`"
+        />
+        <WebStepEditor
+          ref="stepEditorRef"
+          v-model="form.steps"
+          :actions="webActions"
+          :locators="webLocators"
+        />
+      </div>
     </el-form>
 
     <template #footer>
@@ -423,6 +502,10 @@ watch(visible, (open) => {
 
 .editor-tabs {
   margin-top: 4px;
+}
+
+.web-alert {
+  margin-bottom: 12px;
 }
 
 .method-url,

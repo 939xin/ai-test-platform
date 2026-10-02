@@ -5,7 +5,58 @@ TestCase 同时承载接口用例（method/url/headers/assertions）和 Web 用�
 """
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# 操作类型 / 定位方式直接取自执行引擎，避免两处各写一份枚举而悄悄漂移
+from app.services.web_executor import ACTION_LABELS, LOCATOR_ACTIONS, LOCATOR_MAP
+
+
+class WebStep(BaseModel):
+    """Web 用例的一个步骤。
+
+    字段名必须与 services/web_executor.py 读取的完全一致 ——
+    两边对不上会静默跑偏（比如定位值写进 input_value 也能存进去，但执行时必然失败）。
+
+    只挡「必然跑不通」的错：未知操作类型、未知定位方式、需要定位却没填。
+    **刻意不在这里要求 web 用例必须至少有一个步骤** —— 编辑器的正常流程是
+    「先建用例 → 再编排步骤」，强制要求会让新建用例直接 422。空步骤由
+    run-web 接口在执行时拦下来。
+    """
+
+    step_order: int | None = Field(None, description="展示顺序，由前端按数组下标回填")
+    enabled: bool = True
+    action_type: str
+    input_value: str = ""
+    wait_seconds: float = Field(0, ge=0, le=300)
+    description: str = ""
+    locator_type: str = ""
+    locator_value: str = ""
+
+    @field_validator("action_type")
+    @classmethod
+    def _check_action(cls, value: str) -> str:
+        if value not in ACTION_LABELS:
+            raise ValueError(f"不支持的操作类型: {value}（可用: {', '.join(ACTION_LABELS)}）")
+        return value
+
+    @field_validator("locator_type")
+    @classmethod
+    def _check_locator_type(cls, value: str) -> str:
+        if value and value not in LOCATOR_MAP:
+            raise ValueError(f"不支持的定位方式: {value}（可用: {', '.join(LOCATOR_MAP)}）")
+        return value
+
+    @model_validator(mode="after")
+    def _check_locator_required(self):
+        # switch_iframe 的 input_value 填 default 表示退回主文档，此时不需要定位信息
+        if self.action_type == "switch_iframe" and self.input_value == "default":
+            return self
+        if self.action_type in LOCATOR_ACTIONS and not (self.locator_type and self.locator_value):
+            raise ValueError(
+                f"{ACTION_LABELS[self.action_type]} 缺少元素定位信息"
+                "（需要同时填写 locator_type 与 locator_value）"
+            )
+        return self
 
 
 class TestCaseCreate(BaseModel):
@@ -35,7 +86,7 @@ class TestCaseCreate(BaseModel):
     extract_json: list = Field(default_factory=list)
 
     # ---------- Web 步骤 ----------
-    steps_json: list = Field(default_factory=list)
+    steps_json: list[WebStep] = Field(default_factory=list)
 
     # ---------- 脚本与数据驱动 ----------
     pre_script: str = ""
@@ -63,7 +114,7 @@ class TestCaseUpdate(BaseModel):
 
     assertions_json: list | None = None
     extract_json: list | None = None
-    steps_json: list | None = None
+    steps_json: list[WebStep] | None = None
 
     pre_script: str | None = None
     post_script: str | None = None
@@ -122,6 +173,8 @@ class TestCaseBrief(BaseModel):
     url: str
     assertions_json: list = Field(default_factory=list)
     extract_json: list = Field(default_factory=list)
+    # Web 用例同理：列表页的「步骤」列要靠它显示步骤数，少了就永远是 0
+    steps_json: list = Field(default_factory=list)
     # 列表行会带进执行弹窗，弹窗靠它判断要不要显示「按数据文件逐行执行」
     data_file: str = ""
     updated_at: datetime

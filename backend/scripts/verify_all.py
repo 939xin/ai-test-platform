@@ -1,11 +1,13 @@
-"""一键验收 — 覆盖 Day 1 + Day 2 的全部后端能力。
+"""一键验收 — 覆盖 Day 1 ~ Day 4 的全部后端能力。
 
 用法（在 backend/ 目录下，需后端已启动）：
     venv/Scripts/python.exe scripts/verify_all.py
 
 每个开发阶段结束后跑一次，确认没有回归。
+Day 1-3 段需要外网（httpbin.org）；Day 4 段用后端自带的离线演示页，不依赖外网。
 """
 import io
+import shutil
 import sys
 from pathlib import Path
 
@@ -16,6 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import requests  # noqa: E402
 
 BASE = "http://127.0.0.1:8000/api"
+# Web 验收的靶页：后端静态托管的离线演示页（httpbin 没有 UI，测不了 Web）
+DEMO_URL = f"{BASE}/demo/index.html"
+REPORT_ROOT = Path(__file__).resolve().parents[2] / "reports" / "platform"
 RESULTS: list[tuple[str, bool, str]] = []
 
 
@@ -30,7 +35,7 @@ def section(title: str) -> None:
 
 def main() -> int:
     print("=" * 54)
-    print("  验收：Day 1 基础能力 + Day 2 业务闭环")
+    print("  验收：Day 1-3 接口闭环 + Day 4 Web UI 执行")
     print("=" * 54)
 
     # ==================== Day 1 ====================
@@ -398,8 +403,172 @@ def main() -> int:
     r = requests.delete(f"{BASE}/projects/{pid}/datasets/demo_params.csv", timeout=10)
     check("删除数据文件", r.status_code == 204)
 
+    # ==================== Day 4 · Web UI 执行（Selenium）====================
+    section("Day 4 · Web UI 执行 ★")
 
+    # 本段跑完要清理的东西：截图按 execution 分目录，得记下来
+    web_execution_ids: list[int] = []
+    web_report_name = None
 
+    r = requests.get(f"{BASE}/web/status", timeout=15)
+    if r.status_code != 200 or not r.json().get("available"):
+        # 没有浏览器就跳过整段，且**不计入总数** —— 让无 GUI 的机器上仍是全绿
+        reason = r.json().get("error", r.status_code) if r.status_code == 200 else r.status_code
+        print(f"  ⚠️ 跳过 Web 段：本机没有可用的浏览器（{reason}）")
+    else:
+        check("Web 环境探测（浏览器可用）", True,
+              r.json()["browsers"]["chrome"]["detail"])
+
+        r = requests.get(DEMO_URL, timeout=10)
+        check("离线演示页可访问", r.status_code == 200 and 'id="login-btn"' in r.text)
+
+        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+            "name": "Web-覆盖全部 15 种操作",
+            "type": "web",
+            "steps_json": [
+                {"step_order": 1, "action_type": "open_url", "input_value": DEMO_URL,
+                 "locator_type": "", "locator_value": ""},
+                {"step_order": 2, "action_type": "input", "input_value": "admin",
+                 "locator_type": "id", "locator_value": "username"},
+                {"step_order": 3, "action_type": "input", "input_value": "secret",
+                 "locator_type": "id", "locator_value": "password"},
+                {"step_order": 4, "action_type": "click", "input_value": "",
+                 "locator_type": "id", "locator_value": "login-btn"},
+                {"step_order": 5, "action_type": "extract_variable", "input_value": "welcome_text",
+                 "locator_type": "id", "locator_value": "welcome"},
+                {"step_order": 6, "action_type": "assert_text_contains", "input_value": "欢迎 admin",
+                 "locator_type": "id", "locator_value": "welcome"},
+                {"step_order": 7, "action_type": "assert_exists", "input_value": "true",
+                 "locator_type": "id", "locator_value": "status"},
+                {"step_order": 8, "action_type": "assert_visible", "input_value": "false",
+                 "locator_type": "id", "locator_value": "hidden"},
+                {"step_order": 9, "action_type": "clear", "input_value": "",
+                 "locator_type": "id", "locator_value": "city"},
+                {"step_order": 10, "action_type": "force_wait", "input_value": "0.3",
+                 "locator_type": "", "locator_value": ""},
+                {"step_order": 11, "action_type": "smart_wait", "input_value": "",
+                 "locator_type": "id", "locator_value": "bottom", "wait_seconds": 5},
+                {"step_order": 12, "action_type": "scroll_to", "input_value": "",
+                 "locator_type": "id", "locator_value": "bottom"},
+                {"step_order": 13, "action_type": "execute_js", "input_value": "window.scrollTo(0,0);",
+                 "locator_type": "", "locator_value": ""},
+                {"step_order": 14, "action_type": "click", "input_value": "",
+                 "locator_type": "id", "locator_value": "newlink"},
+                {"step_order": 15, "action_type": "switch_window", "input_value": "1",
+                 "locator_type": "", "locator_value": ""},
+                {"step_order": 16, "action_type": "switch_window", "input_value": "0",
+                 "locator_type": "", "locator_value": ""},
+                {"step_order": 17, "action_type": "switch_iframe", "input_value": "",
+                 "locator_type": "id", "locator_value": "frame"},
+                {"step_order": 18, "action_type": "switch_iframe", "input_value": "default",
+                 "locator_type": "", "locator_value": ""},
+                {"step_order": 19, "action_type": "screenshot", "input_value": "demo",
+                 "locator_type": "", "locator_value": ""},
+            ],
+        }, timeout=10)
+        check("新建 Web 用例（19 步，覆盖 15 种操作）", r.status_code == 201,
+              r.text[:120] if r.status_code != 201 else "")
+        web_case = r.json().get("id") if r.status_code == 201 else None
+
+        if web_case:
+            detail = requests.get(f"{BASE}/cases/{web_case}", timeout=10).json()
+            steps = detail.get("steps_json") or []
+            check("Web 步骤原样保存", detail.get("type") == "web" and len(steps) == 19,
+                  f'type={detail.get("type")} steps={len(steps)}')
+            # 字段名漂移的回归防线：前后端对不上会静默跑偏，所以在验收里钉死
+            check("Web 步骤字段名与执行引擎一致",
+                  set(steps[0]) >= {"step_order", "enabled", "action_type", "input_value",
+                                    "wait_seconds", "description", "locator_type", "locator_value"},
+                  str(sorted(steps[0])))
+
+            r = requests.post(f"{BASE}/cases/{web_case}/run-web",
+                              json={"browser": "chrome", "headless": True, "timeout": 180},
+                              timeout=300)
+            check("执行 Web 用例", r.status_code == 200)
+            if r.status_code == 200:
+                ex = r.json()
+                web_execution_ids.append(ex["id"])
+                check("Web 用例整体通过", ex["status"] == "pass",
+                      f'{ex["status"]} {ex["duration_ms"]}ms')
+                step_results = ex["result_json"]["steps"]
+                check("19 个步骤全部通过",
+                      len(step_results) == 19 and all(s["status"] == "pass" for s in step_results),
+                      " | ".join(f'{s["step_order"]}:{s["status"]}' for s in step_results
+                                 if s["status"] != "pass") or "全部 pass")
+                check("步骤间变量提取生效",
+                      ex["result_json"]["extracted"].get("welcome_text") == "欢迎 admin",
+                      str(ex["result_json"]["extracted"]))
+
+                shots = [s for step in step_results for s in step["screenshots"]]
+                check("手动截图步骤产出了文件", bool(shots), str(shots[:1]))
+                if shots:
+                    r2 = requests.get(f"{BASE}/reports/{shots[0]}", timeout=10)
+                    check("截图可通过接口取到",
+                          r2.status_code == 200 and "image" in r2.headers.get("content-type", ""),
+                          f'{r2.status_code} {r2.headers.get("content-type")}')
+
+        # 一条必然失败的用例：这条断言守的就是「失败自动截图从未生效」那个老 bug
+        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+            "name": "Web-必然失败", "type": "web",
+            "steps_json": [
+                {"step_order": 1, "action_type": "open_url", "input_value": DEMO_URL,
+                 "locator_type": "", "locator_value": ""},
+                {"step_order": 2, "action_type": "assert_text_contains",
+                 "input_value": "页面里绝对没有这句话",
+                 "locator_type": "id", "locator_value": "status"},
+            ],
+        }, timeout=10)
+        fail_case = r.json().get("id") if r.status_code == 201 else None
+
+        if fail_case:
+            r = requests.post(f"{BASE}/cases/{fail_case}/run-web",
+                              json={"browser": "chrome", "headless": True, "timeout": 120},
+                              timeout=300)
+            check("失败 Web 用例记为 fail", r.status_code == 200 and r.json()["status"] == "fail")
+            if r.status_code == 200:
+                ex = r.json()
+                web_execution_ids.append(ex["id"])
+                failed_step = next((s for s in ex["result_json"]["steps"]
+                                    if s["status"] == "fail"), {})
+                check("失败步骤自动截图（老 bug 回归防线）",
+                      bool(failed_step.get("screenshots")),
+                      str(failed_step.get("screenshots") or "没有截图"))
+
+        # 类型守卫 + 空步骤守卫
+        if case_id:
+            r = requests.post(f"{BASE}/cases/{case_id}/run-web", json={}, timeout=30)
+            check("接口用例调 run-web 返回 400", r.status_code == 400, str(r.status_code))
+        r = requests.post(f"{BASE}/projects/{pid}/cases",
+                          json={"name": "Web-空步骤", "type": "web", "steps_json": []}, timeout=10)
+        if r.status_code == 201:
+            r = requests.post(f"{BASE}/cases/{r.json()['id']}/run-web", json={}, timeout=30)
+            check("无步骤 Web 用例返回 400", r.status_code == 400, str(r.status_code))
+
+        # 步骤校验：未知操作 / 缺定位，都应在写库前被 422 挡下
+        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+            "name": "Web-非法操作", "type": "web",
+            "steps_json": [{"step_order": 1, "action_type": "no_such_action"}]}, timeout=10)
+        check("未知操作类型返回 422", r.status_code == 422, str(r.status_code))
+        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+            "name": "Web-缺定位", "type": "web",
+            "steps_json": [{"step_order": 1, "action_type": "click", "input_value": ""}]}, timeout=10)
+        check("需要定位却没填返回 422", r.status_code == 422, str(r.status_code))
+
+        # 截图接口的路径穿越防护
+        r = requests.get(f"{BASE}/reports/screenshots/..%2F..%2F..%2Fconfig.py", timeout=10)
+        check("截图接口挡住路径穿越", r.status_code in (400, 404), str(r.status_code))
+
+        # Web 报告：步骤表 + 截图都要出现在 HTML 里
+        if web_execution_ids:
+            r = requests.post(f"{BASE}/projects/{pid}/reports",
+                              json={"execution_ids": web_execution_ids, "test_type": "web"},
+                              timeout=60)
+            check("生成 Web 报告", r.status_code == 200)
+            if r.status_code == 200:
+                web_report_name = r.json()["filename"]
+                html = requests.get(f"{BASE}/reports/{web_report_name}", timeout=10).text
+                check("Web 报告含步骤描述与截图",
+                      "打开 URL" in html and "<img src=" in html and "screenshots/" in html)
 
     # ==================== 清理 ====================
     section("清理验收数据")
@@ -412,11 +581,17 @@ def main() -> int:
     r = requests.get(f"{BASE}/projects/{pid}", timeout=10)
     check("级联删除生效（项目 404）", r.status_code == 404)
 
-    # 验收生成的报告文件一并清掉，避免 reports/platform 越积越多
-    if report_name:
-        report_file = Path(__file__).resolve().parents[2] / "reports" / "platform" / report_name
+    # 验收生成的报告文件与截图目录一并清掉，避免 reports/platform 越积越多
+    for name in (report_name, web_report_name):
+        if not name:
+            continue
+        report_file = REPORT_ROOT / name
         if report_file.exists():
             report_file.unlink()
+    for execution_id in web_execution_ids:
+        shot_dir = REPORT_ROOT / "screenshots" / f"execution_{execution_id}"
+        if shot_dir.exists():
+            shutil.rmtree(shot_dir, ignore_errors=True)
 
     # ==================== 汇总 ====================
     passed = sum(1 for _, ok, _ in RESULTS if ok)

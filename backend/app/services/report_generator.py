@@ -35,12 +35,42 @@ def _pretty(value) -> str:
 
 
 def _execution_to_case(execution: Execution, case_name: str) -> dict:
-    """把一条 execution 组装成 _build_html 期望的「用例」dict。"""
+    """把一条 execution 组装成 _build_html 期望的「用例」dict。
+
+    两条分支：Web 用例的 result_json 带 steps（步骤级明细），接口用例带
+    request/response/assertions。判断依据是 steps 存不存在。
+    """
     rj = execution.result_json or {}
+    error_msg = rj.get("error_msg") or ""
+
+    # ---------- Web 用例：每条步骤直接铺成一行 ----------
+    steps = rj.get("steps")
+    if steps:
+        details: list[dict] = []
+        for index, step in enumerate(steps, start=1):
+            message = step.get("message") or ""
+            if error_msg:
+                message = f"{message} | {error_msg}".strip(" |")
+            details.append({
+                "id": execution.id,
+                "step_order": step.get("step_order") or index,
+                "step_description": step.get("desc") or "-",
+                "status": step.get("status", "fail"),
+                "message": message,
+                # 截图存的是相对 report_dir 的 POSIX 路径，报告里直接当相对 URL 用
+                "screenshots": step.get("screenshots") or [],
+            })
+        return {
+            "case_name": case_name,
+            "status": execution.status,
+            "duration_ms": execution.duration_ms,
+            "details": details,
+        }
+
+    # ---------- 接口用例 ----------
     request = rj.get("request") or {}
     response = rj.get("response") or {}
     assertions = rj.get("assertions") or []
-    error_msg = rj.get("error_msg") or ""
 
     # 没有断言时也留一行，报告里能看出「这条没写断言」
     rows = assertions or [None]
@@ -154,15 +184,21 @@ def _build_html(results: list[dict], stats: dict) -> str:
                 </tr>"""
 
                 # 截图嵌入（Web 用例用，接口用例恒为空）
-                if d.get('screenshots'):
-                    for s_b64 in d['screenshots']:
-                        details_html += f"""
+                for shot in d.get('screenshots') or []:
+                    # 新实现存的是相对路径（如 screenshots/execution_5/step_01_x.png）：
+                    # 经 /api/reports/xxx.html 打开时，浏览器会把它解析到
+                    # /api/reports/screenshots/... 正好命中截图路由；
+                    # 双击本地文件打开时，它又正好指向磁盘上的真实文件。
+                    # 旧报告里存的是 data:image/png;base64,... 整串，原样放进
+                    # href/src 也能显示，这里不做转换即可兼容。
+                    src = str(shot)
+                    details_html += f"""
                 <tr class="screenshot-row">
                     <td colspan="4">
                         <div class="screenshot-block">
                             <strong>📸 截图:</strong><br>
-                            <a href="data:image/png;base64,{s_b64}" target="_blank">
-                                <img src="data:image/png;base64,{s_b64}"
+                            <a href="{src}" target="_blank">
+                                <img src="{src}"
                                      style="max-width:400px; cursor:pointer; border:1px solid #ddd; border-radius:4px;"
                                      title="点击放大/缩小">
                             </a>

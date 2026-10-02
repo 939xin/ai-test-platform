@@ -11,6 +11,19 @@ class RunCaseRequest(BaseModel):
     timeout: int = Field(30, ge=1, le=120, description="单次请求超时（秒）")
 
 
+class RunWebRequest(BaseModel):
+    """执行单条 Web UI 用例时的可选参数。
+
+    timeout 是**整条用例**的保险丝（不是单次请求超时）：Web 用例要等页面渲染，
+    天然比接口用例慢，默认给到 300 秒，比接口侧的 30 秒宽松得多。
+    """
+
+    env_id: int | None = Field(None, description="要使用的环境 id，用于解析 ${变量}")
+    browser: str = Field("chrome", pattern="^(chrome|edge)$", description="浏览器")
+    headless: bool = Field(True, description="无头模式；排障时可关掉，观察浏览器的实际操作")
+    timeout: int = Field(300, ge=10, le=1800, description="整条用例的超时（秒）")
+
+
 class DataDrivenRunResult(BaseModel):
     """数据驱动的执行结果：一条用例按数据文件的每一行各跑一次。"""
 

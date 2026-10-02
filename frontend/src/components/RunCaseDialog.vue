@@ -4,7 +4,8 @@ import { computed, ref, watch } from 'vue'
 import ExecutionResult from '@/components/ExecutionResult.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { listEnvironments } from '@/api/environment'
-import { runCase, runCaseDataDriven } from '@/api/execution'
+import { runCase, runCaseDataDriven, runWebCase } from '@/api/execution'
+import { getWebStatus } from '@/api/web'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -23,17 +24,31 @@ const envId = ref(null)
 const running = ref(false)
 const result = ref(null)
 
-// 数据驱动：用例绑了数据文件时，可以按行执行
+// 数据驱动：用例绑了数据文件时，可以按行执行（仅接口用例）
 const dataDriven = ref(false)
 const batch = ref(null)
 const activeRow = ref(0)
 
-const hasDataFile = computed(() => Boolean(props.caseRow?.data_file))
+const isWeb = computed(() => props.caseRow?.type === 'web')
+const hasDataFile = computed(() => !isWeb.value && Boolean(props.caseRow?.data_file))
+
+// Web 用例的执行参数
+const webInfo = ref(null)
+const browser = ref('chrome')
+const headless = ref(true)
+const webTimeout = ref(300)
+// 本机没有可用浏览器时禁用执行，并直接说明原因
+const webBlocked = computed(() => isWeb.value && Boolean(webInfo.value) && !webInfo.value.available)
 
 async function loadEnvironments() {
   if (props.projectId == null) return
   environments.value = await listEnvironments(props.projectId)
   envId.value = environments.value.length ? environments.value[0].id : null
+}
+
+async function loadWebInfo() {
+  if (!isWeb.value || webInfo.value) return
+  webInfo.value = await getWebStatus()
 }
 
 async function run() {
@@ -42,7 +57,14 @@ async function run() {
   batch.value = null
   activeRow.value = 0
   try {
-    if (dataDriven.value && hasDataFile.value) {
+    if (isWeb.value) {
+      result.value = await runWebCase(props.caseRow.id, {
+        env_id: envId.value,
+        browser: browser.value,
+        headless: headless.value,
+        timeout: webTimeout.value,
+      })
+    } else if (dataDriven.value && hasDataFile.value) {
       batch.value = await runCaseDataDriven(props.caseRow.id, { env_id: envId.value, timeout: 30 })
     } else {
       result.value = await runCase(props.caseRow.id, { env_id: envId.value, timeout: 30 })
@@ -73,6 +95,7 @@ watch(visible, (open) => {
     batch.value = null
     dataDriven.value = false
     loadEnvironments()
+    loadWebInfo()
   }
 })
 </script>
@@ -81,16 +104,44 @@ watch(visible, (open) => {
   <el-dialog v-model="visible" title="执行用例" width="820px" top="6vh">
     <div v-if="caseRow" class="run-head">
       <div class="run-title">
-        <span class="mono method">{{ caseRow.method }}</span>
+        <span class="mono method">{{ isWeb ? 'WEB' : caseRow.method }}</span>
         <span class="run-name">{{ caseRow.name }}</span>
       </div>
       <div class="run-actions">
         <el-select v-model="envId" placeholder="不使用环境" clearable style="width: 170px">
           <el-option v-for="e in environments" :key="e.id" :label="e.name" :value="e.id" />
         </el-select>
-        <el-button type="primary" :loading="running" @click="run">开始执行</el-button>
+        <el-button type="primary" :loading="running" :disabled="webBlocked" @click="run">
+          开始执行
+        </el-button>
       </div>
     </div>
+
+    <div v-if="isWeb" class="web-bar">
+      <el-select v-model="browser" style="width: 118px">
+        <el-option label="Chrome" value="chrome" />
+        <el-option label="Edge" value="edge" />
+      </el-select>
+      <el-checkbox v-model="headless">无头模式</el-checkbox>
+      <el-input-number
+        v-model="webTimeout"
+        :min="10"
+        :max="1800"
+        :step="30"
+        controls-position="right"
+        style="width: 130px"
+      />
+      <span class="web-bar-text">秒（整条用例超时）</span>
+    </div>
+
+    <el-alert
+      v-if="webBlocked"
+      type="error"
+      show-icon
+      :closable="false"
+      class="web-blocked"
+      :title="`本机没有可用的浏览器，无法执行：${webInfo.error}`"
+    />
 
     <div v-if="hasDataFile" class="data-driven-bar">
       <el-switch v-model="dataDriven" />
@@ -102,7 +153,13 @@ watch(visible, (open) => {
 
     <el-empty v-if="!result && !batch && !running" description="选择环境后点击「开始执行」" :image-size="80" />
     <div v-if="running" class="running-hint">
-      {{ dataDriven && hasDataFile ? '正在逐行执行…' : '正在请求接口…' }}
+      {{
+        isWeb
+          ? '正在启动浏览器并执行步骤，首次运行需下载驱动，可能较慢…'
+          : dataDriven && hasDataFile
+            ? '正在逐行执行…'
+            : '正在请求接口…'
+      }}
     </div>
 
     <ExecutionResult v-if="result" :execution="result" />
@@ -198,6 +255,26 @@ watch(visible, (open) => {
   background: var(--brand-100);
   border: 1px solid #b3d6dd;
   border-radius: var(--radius);
+}
+
+.web-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--brand-100);
+  border: 1px solid #b3d6dd;
+  border-radius: var(--radius);
+}
+
+.web-bar-text {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.web-blocked {
+  margin-bottom: 12px;
 }
 
 .data-driven-text {

@@ -41,6 +41,10 @@ function extractCount(row) {
   return (row.extract_json || []).length
 }
 
+function stepCount(row) {
+  return (row.steps_json || []).length
+}
+
 function formatTime(value) {
   return value ? value.replace('T', ' ').slice(0, 19) : '—'
 }
@@ -152,27 +156,43 @@ onMounted(async () => {
             <span class="mono type-chip">{{ row.type === 'api' ? '接口' : 'Web' }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="步骤" width="76" align="center">
+          <template #default="{ row }">
+            <span v-if="row.type === 'web'" class="mono">{{ stepCount(row) }}</span>
+            <span v-else class="mono is-zero">—</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="priority" label="优先级" width="90" />
         <el-table-column label="方法" width="100">
           <template #default="{ row }">
-            <span class="mono method" :style="{ color: METHOD_COLORS[row.method] || '#4a5c64' }">
+            <span
+              v-if="row.type === 'api'"
+              class="mono method"
+              :style="{ color: METHOD_COLORS[row.method] || '#4a5c64' }"
+            >
               {{ row.method }}
             </span>
+            <span v-else class="mono is-zero">—</span>
           </template>
         </el-table-column>
         <el-table-column prop="url" label="URL" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
-            <span class="mono">{{ row.url || '—' }}</span>
+            <span v-if="row.type === 'api'" class="mono">{{ row.url || '—' }}</span>
+            <span v-else class="is-zero">Web 用例的地址写在步骤里</span>
           </template>
         </el-table-column>
         <el-table-column label="断言" width="76" align="center">
           <template #default="{ row }">
-            <span class="mono">{{ assertionCount(row) }}</span>
+            <span v-if="row.type === 'api'" class="mono">{{ assertionCount(row) }}</span>
+            <span v-else class="mono is-zero">—</span>
           </template>
         </el-table-column>
         <el-table-column label="提取" width="76" align="center">
           <template #default="{ row }">
-            <span class="mono" :class="{ 'is-zero': !extractCount(row) }">{{ extractCount(row) }}</span>
+            <span v-if="row.type === 'api'" class="mono" :class="{ 'is-zero': !extractCount(row) }">
+              {{ extractCount(row) }}
+            </span>
+            <span v-else class="mono is-zero">—</span>
           </template>
         </el-table-column>
         <el-table-column label="更新时间" width="170">

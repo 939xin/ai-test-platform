@@ -43,6 +43,20 @@ class Settings(BaseSettings):
     dataset_dir: str = str(BASE_DIR.parent / "data" / "datasets")
     dataset_max_bytes: int = 5 * 1024 * 1024  # 上传上限 5MB
 
+    # ---------- Web UI 测试 ----------
+    # drivers/ —— webdriver-manager 的驱动缓存目录。
+    # 它的默认值是 C:\Users\<用户>\.wdm，而项目约束禁止在 C 盘产生大文件，
+    # 所以必须显式重定向（见 services/browser_manager.py）。已在 .gitignore 中。
+    driver_cache_dir: str = str(BASE_DIR.parent / "drivers")
+
+    # reports/platform/screenshots/execution_{id}/ —— Web 用例的步骤截图。
+    # 刻意放在 report_dir 之下，报告 HTML 里才能用相对路径引用
+    # （经接口打开和双击本地文件打开两种方式都显示得出来）。
+    screenshot_dir: str = str(BASE_DIR.parent / "reports" / "platform" / "screenshots")
+
+    # app/static/demo/ —— 离线演示页，给验收脚本当靶页（httpbin 没有 UI，无法测 Web）
+    demo_dir: str = str(BASE_DIR / "app" / "static" / "demo")
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
