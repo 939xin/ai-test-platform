@@ -76,7 +76,7 @@ onMounted(checkHealth)
       <header class="topbar">
         <div class="topbar-title">{{ pageTitle }}</div>
         <div class="topbar-right">
-          <span class="topbar-hint">项目 / 环境切换将在 Day 2 接入</span>
+          <span class="topbar-hint">AI 辅助软件测试平台</span>
           <el-avatar :size="28" class="avatar">A</el-avatar>
         </div>
       </header>

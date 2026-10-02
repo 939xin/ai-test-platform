@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # ---------- CORS ----------
     cors_origins: str = "http://localhost:5173"
 
+    # ---------- 测试报告 ----------
+    # reports/platform/ —— 刻意与旧桌面版输出隔开：reports/ 根目录下还留着
+    # 旧 PySide6 工具生成的几十份报告，混在一起列表页会很乱。已在 .gitignore 中。
+    report_dir: str = str(BASE_DIR.parent / "reports" / "platform")
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

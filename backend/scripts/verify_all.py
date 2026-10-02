@@ -169,6 +169,33 @@ def main() -> int:
           and r.json().get("case_name") == "GET /get 验收用例"
           and r.json()["result_json"]["response"]["status"] == 200)
 
+    section("Day 3 · 测试报告")
+    report_name = None
+    r = requests.post(f"{BASE}/projects/{pid}/reports",
+                      json={"execution_ids": [execution_id]}, timeout=30)
+    check("生成 HTML 报告", r.status_code == 200 and r.json().get("filename", "").endswith(".html"))
+    if r.status_code == 200:
+        report_name = r.json()["filename"]
+        stats = r.json()["stats"]
+        check("报告统计与执行一致",
+              stats["total"] == 1 and stats["passed"] == 1 and stats["failed"] == 0,
+              f"{stats['passed']}/{stats['total']} 通过率 {stats['rate']}")
+
+    if report_name:
+        r = requests.get(f"{BASE}/reports/{report_name}", timeout=10)
+        check("报告内容含用例名与断言结论",
+              r.status_code == 200
+              and "GET /get 验收用例" in r.text
+              and "响应体" in r.text
+              and "测试报告" in r.text)
+
+        r = requests.get(f"{BASE}/reports", timeout=10)
+        check("报告列表能查到新报告",
+              r.status_code == 200 and any(f["filename"] == report_name for f in r.json()))
+
+        r = requests.get(f"{BASE}/reports/..%2Fconfig.py", timeout=10)
+        check("报告接口挡住路径穿越", r.status_code in (400, 404))
+
     # ==================== 清理 ====================
     section("清理验收数据")
     if case_id:
@@ -179,6 +206,12 @@ def main() -> int:
         requests.delete(f"{BASE}/projects/{pid}", timeout=10)
     r = requests.get(f"{BASE}/projects/{pid}", timeout=10)
     check("级联删除生效（项目 404）", r.status_code == 404)
+
+    # 验收生成的报告文件一并清掉，避免 reports/platform 越积越多
+    if report_name:
+        report_file = Path(__file__).resolve().parents[2] / "reports" / "platform" / report_name
+        if report_file.exists():
+            report_file.unlink()
 
     # ==================== 汇总 ====================
     passed = sum(1 for _, ok, _ in RESULTS if ok)
