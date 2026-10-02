@@ -1,6 +1,13 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import {
+  CircleCheck,
+  DataLine,
+  Refresh,
+  Search,
+  TrendCharts,
+  WarningFilled,
+} from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import ExecutionResult from '@/components/ExecutionResult.vue'
@@ -31,6 +38,12 @@ const stats = computed(() => {
   const pass = executions.value.filter((e) => e.status === 'pass').length
   const fail = executions.value.filter((e) => e.status === 'fail' || e.status === 'error').length
   return { total: executions.value.length, pass, fail }
+})
+
+// 通过率为空时显示「—」，别显示 0% —— 一条记录都没有时 0% 是误导
+const passRate = computed(() => {
+  if (!stats.value.total) return '—'
+  return `${((stats.value.pass / stats.value.total) * 100).toFixed(1)}%`
 })
 
 function formatTime(value) {
@@ -79,7 +92,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <div class="page-stack">
     <PageHeader title="执行中心" description="历史执行记录，点「查看」可看请求 / 响应 / 断言，或 Web 用例的步骤明细">
       <el-select
         v-model="currentProjectId"
@@ -93,21 +106,37 @@ onMounted(async () => {
     </PageHeader>
 
     <div class="stat-row">
-      <div class="stat-card">
-        <div class="stat-label">当前列表执行数</div>
-        <div class="mono stat-value">{{ stats.total }}</div>
-      </div>
-      <div class="stat-card is-pass">
-        <div class="stat-label">通过</div>
-        <div class="mono stat-value">{{ stats.pass }}</div>
-      </div>
-      <div class="stat-card is-fail">
-        <div class="stat-label">失败 / 错误</div>
-        <div class="mono stat-value">{{ stats.fail }}</div>
-      </div>
+      <el-card class="stat-card" shadow="never">
+        <span class="stat-icon is-total"><el-icon :size="18"><DataLine /></el-icon></span>
+        <div class="stat-text">
+          <div class="stat-label">执行记录</div>
+          <div class="mono stat-value">{{ stats.total }}</div>
+        </div>
+      </el-card>
+      <el-card class="stat-card" shadow="never">
+        <span class="stat-icon is-pass"><el-icon :size="18"><CircleCheck /></el-icon></span>
+        <div class="stat-text">
+          <div class="stat-label">通过</div>
+          <div class="mono stat-value">{{ stats.pass }}</div>
+        </div>
+      </el-card>
+      <el-card class="stat-card" shadow="never">
+        <span class="stat-icon is-fail"><el-icon :size="18"><WarningFilled /></el-icon></span>
+        <div class="stat-text">
+          <div class="stat-label">失败 / 错误</div>
+          <div class="mono stat-value">{{ stats.fail }}</div>
+        </div>
+      </el-card>
+      <el-card class="stat-card" shadow="never">
+        <span class="stat-icon is-rate"><el-icon :size="18"><TrendCharts /></el-icon></span>
+        <div class="stat-text">
+          <div class="stat-label">通过率</div>
+          <div class="mono stat-value">{{ passRate }}</div>
+        </div>
+      </el-card>
     </div>
 
-    <el-card shadow="never">
+    <el-card class="card-filter" shadow="never">
       <div class="filter-bar">
         <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 150px">
           <el-option v-for="s in STATUS_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
@@ -123,6 +152,13 @@ onMounted(async () => {
         >
           重置
         </el-button>
+      </div>
+    </el-card>
+
+    <el-card shadow="never">
+      <div class="card-tools">
+        <span>共 {{ executions.length }} 条记录</span>
+        <el-button link :icon="Refresh" @click="loadExecutions">刷新</el-button>
       </div>
 
       <el-table v-loading="loading" :data="executions">
@@ -179,45 +215,59 @@ onMounted(async () => {
 
 <style scoped>
 .stat-row {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
 }
 
-.stat-card {
-  flex: 1;
-  padding: 12px 16px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--brand-700);
+.stat-card :deep(.el-card__body) {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+/* 图标底色区分三态，比原来那条左边的色条更像卡片 */
+.stat-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius);
 }
 
-.stat-card.is-pass {
-  border-left-color: var(--signal-pass);
+.stat-icon.is-total {
+  background: var(--brand-100);
+  color: var(--brand-700);
 }
 
-.stat-card.is-fail {
-  border-left-color: var(--signal-fail);
+.stat-icon.is-pass {
+  background: var(--signal-pass-bg);
+  color: var(--signal-pass);
+}
+
+.stat-icon.is-fail {
+  background: var(--signal-fail-bg);
+  color: var(--signal-fail);
+}
+
+.stat-icon.is-rate {
+  background: var(--signal-warn-bg);
+  color: var(--signal-warn);
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-3);
 }
 
 .stat-value {
-  margin-top: 4px;
+  margin-top: 2px;
   font-size: 22px;
   font-weight: 600;
   line-height: 1.2;
   color: var(--text-1);
-}
-
-.filter-bar {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
 }
 
 .deleted {
