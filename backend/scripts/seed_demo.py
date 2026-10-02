@@ -1,7 +1,7 @@
 """演示数据种子。
 
-造一个可直接演示的项目：httpbin 环境 + 4 条接口用例（1 条故意失败）+ 若干执行记录。
-可重复执行：已存在同名项目时复用，不会重复建项目。
+造一个可直接演示的项目：httpbin 环境 + 用例（含 1 条故意失败）+ 场景串联 + 数据驱动
++ 若干执行记录。可重复执行：已存在同名项目时复用，不会重复建项目。
 
 用法：backend> venv/Scripts/python.exe scripts/seed_demo.py
 """
@@ -16,6 +16,10 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="repla
 
 BASE = "http://127.0.0.1:8000/api"
 PROJECT_NAME = "演示项目 · httpbin 接口测试"
+
+# 数据驱动用的 CSV（表头为列名，每行执行一次）
+DATA_FILE_NAME = "demo_params.csv"
+DATA_CSV = "keyword,note\n苹果,第一个\n香蕉,第二个\n橙子,第三个\n"
 
 # 每条用例：名称 / 方法 / URL / 断言（最后一条断言故意写错，用来演示失败态）
 CASES = [
@@ -81,7 +85,21 @@ CASES = [
             {"assertion_type": "status_code", "operator": "eq", "expected_value": "200", "target": ""},
         ],
         # 这条用例的 URL 靠场景里的上一步提供变量，单独跑必然失败 —— 不单独执行
-        "needs_scenario": True,
+        "skip_standalone": True,
+    },
+    {
+        # 按数据文件逐行执行，URL 与断言都用本行的 ${keyword}
+        "name": "数据驱动·按行请求 httpbin",
+        "method": "GET",
+        "url": "https://httpbin.org/get?keyword=${keyword}",
+        "priority": "P1",
+        "tags": "演示,数据驱动",
+        "assertions_json": [
+            {"assertion_type": "response_body", "operator": "eq",
+             "expected_value": "${keyword}", "target": "$.args.keyword"},
+        ],
+        "data_file": DATA_FILE_NAME,
+        "skip_standalone": True,  # 单独跑没有行数据，靠数据驱动接口执行
     },
 ]
 
@@ -124,7 +142,7 @@ def main() -> int:
     case_ids: list[int] = []
     for spec in CASES:
         payload = {"type": "api", "body_type": "", "body_content": ""}
-        payload.update({k: v for k, v in spec.items() if k != "needs_scenario"})
+        payload.update({k: v for k, v in spec.items() if k != "skip_standalone"})
         found = next((c for c in current if c["name"] == spec["name"]), None)
         if found:
             r = requests.put(f"{BASE}/cases/{found['id']}", json=payload, timeout=10)
@@ -137,11 +155,11 @@ def main() -> int:
         case_ids.append(r.json()["id"])
         print(f"  用例 {spec['name']} (id={case_ids[-1]})")
 
-    # 4. 执行一遍，留下历史记录（依赖场景变量的用例跳过，见 needs_scenario）
+    # 4. 执行一遍，留下历史记录（依赖场景变量的用例跳过，见 skip_standalone）
     print("\n执行用例：")
     for spec, cid in zip(CASES, case_ids):
-        if spec.get("needs_scenario"):
-            print(f"  跳过 {spec['name']}（需在场景中执行）")
+        if spec.get("skip_standalone"):
+            print(f"  跳过 {spec['name']}（需在场景/数据驱动下执行）")
             continue
         r = requests.post(f"{BASE}/cases/{cid}/run", json={"env_id": env_id, "timeout": 30}, timeout=60)
         if r.status_code != 200:
@@ -152,8 +170,32 @@ def main() -> int:
         n_all = len(ex["result_json"].get("assertions", []))
         print(f"  执行 #{ex['id']}  {ex['status']:<5} {ex['duration_ms']:>5}ms  断言 {n_pass}/{n_all}")
 
-    # 5. 场景（同名则复用）
+    # 5. 数据文件（同名则覆盖重传）
     by_name = {spec["name"]: cid for spec, cid in zip(CASES, case_ids)}
+    existing_ds = requests.get(f"{BASE}/projects/{pid}/datasets", timeout=10).json()
+    if any(d["filename"] == DATA_FILE_NAME for d in existing_ds):
+        requests.delete(f"{BASE}/projects/{pid}/datasets/{DATA_FILE_NAME}", timeout=10)
+    r = requests.post(f"{BASE}/projects/{pid}/datasets",
+                      files={"file": (DATA_FILE_NAME,
+                                      DATA_CSV.encode("utf-8-sig"), "text/csv")},
+                      timeout=10)
+    r.raise_for_status()
+    print(f"\n数据文件 {DATA_FILE_NAME}（{r.json()['rows']} 行，列名 {r.json()['columns']}）")
+
+    # 数据驱动执行：一条用例按每行各跑一次
+    dd_case = by_name.get("数据驱动·按行请求 httpbin")
+    if dd_case:
+        r = requests.post(f"{BASE}/cases/{dd_case}/run-data-driven",
+                          json={"env_id": env_id}, timeout=120)
+        if r.status_code == 200:
+            run = r.json()
+            print(f"  数据驱动执行：{run['passed']}/{run['total']} 通过")
+            for row in run["rows"]:
+                data = row["result_json"].get("row_data", {})
+                print(f"    第{row['result_json']['row_index']}行 {row['status']:<5} "
+                      f"keyword={data.get('keyword')}  {row['duration_ms']}ms")
+
+    # 6. 场景（同名则复用）
     scenarios = requests.get(f"{BASE}/projects/{pid}/scenarios", timeout=10).json()
     scenario = next((s for s in scenarios if s["name"] == SCENARIO_NAME), None)
     if scenario is None:

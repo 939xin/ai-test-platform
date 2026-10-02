@@ -160,7 +160,9 @@ def execute_case(case: dict, environment: dict | None = None,
     elif assertions:
         status = "pass"
         for rule in assertions:
-            expected = str(rule.get("expected_value") or "").strip()
+            # 期望值也过一遍变量解析：数据驱动时最常见的写法就是「断言返回值等于本行的某个值」
+            # （旧实现不解析，这里补上；只会让原本必然失败的断言变正确，不影响已有行为）
+            expected = resolver.resolve(str(rule.get("expected_value") or "")).strip()
             if not expected:
                 continue  # 空期望值静默跳过，保留旧行为
             result = evaluate(

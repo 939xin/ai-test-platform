@@ -5,7 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
-from app.api import auth, cases, environments, executions, health, projects, reports, scenarios
+from app.api import (
+    auth, cases, datasets, environments, executions, health, projects, reports, scenarios,
+)
 from app.config import settings
 
 
@@ -51,3 +53,4 @@ app.include_router(cases.router, prefix="/api", tags=["cases"])
 app.include_router(executions.router, prefix="/api", tags=["executions"])
 app.include_router(reports.router, prefix="/api", tags=["reports"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
+app.include_router(datasets.router, prefix="/api", tags=["datasets"])

@@ -122,4 +122,6 @@ class TestCaseBrief(BaseModel):
     url: str
     assertions_json: list = Field(default_factory=list)
     extract_json: list = Field(default_factory=list)
+    # 列表行会带进执行弹窗，弹窗靠它判断要不要显示「按数据文件逐行执行」
+    data_file: str = ""
     updated_at: datetime

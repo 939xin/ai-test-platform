@@ -11,6 +11,18 @@ class RunCaseRequest(BaseModel):
     timeout: int = Field(30, ge=1, le=120, description="单次请求超时（秒）")
 
 
+class DataDrivenRunResult(BaseModel):
+    """数据驱动的执行结果：一条用例按数据文件的每一行各跑一次。"""
+
+    case_id: int
+    case_name: str
+    data_file: str
+    total: int
+    passed: int
+    failed: int
+    rows: list["ExecutionOut"]
+
+
 class ExecutionOut(BaseModel):
     """单次执行详情，含完整请求/响应/断言结果。"""
 

@@ -143,6 +143,8 @@ def main() -> int:
           r.status_code == 200
           and len(row.get("assertions_json") or []) == 2
           and len(row.get("extract_json") or []) == 3)
+    check("列表接口带 data_file（执行弹窗判断数据驱动用）",
+          "data_file" in row, str(sorted(row.keys()))[:120])
 
     r = requests.get(f"{BASE}/projects/{pid}/cases", params={"type": "api"}, timeout=10)
     check("按类型筛选", r.status_code == 200 and len(r.json()) == 1)
@@ -320,6 +322,82 @@ def main() -> int:
 
     r = requests.delete(f"{BASE}/scenarios/{stop_scenario}", timeout=10)
     check("删除场景", r.status_code == 204)
+
+    # ==================== Day 3 · 数据驱动（任务 4）====================
+    section("Day 3 · 数据驱动 ★")
+
+    csv_text = "keyword,note\n苹果,第一个\n香蕉,第二个\n橙子,第三个\n"
+    r = requests.post(f"{BASE}/projects/{pid}/datasets",
+                      files={"file": ("demo_params.csv", csv_text.encode("utf-8"), "text/csv")},
+                      timeout=10)
+    check("上传 CSV 数据文件", r.status_code == 201, r.text[:100] if r.status_code != 201 else "")
+    ds = r.json() if r.status_code == 201 else {}
+    check("识别出数据行数与列名",
+          ds.get("rows") == 3 and ds.get("columns") == ["keyword", "note"],
+          f"{ds.get('rows')} 行 / {ds.get('columns')}")
+
+    r = requests.get(f"{BASE}/projects/{pid}/datasets", timeout=10)
+    check("数据文件列表可查",
+          r.status_code == 200 and any(d["filename"] == "demo_params.csv" for d in r.json()))
+
+    r = requests.get(f"{BASE}/projects/{pid}/datasets/demo_params.csv/preview", timeout=10)
+    check("预览数据文件",
+          r.status_code == 200
+          and len(r.json()["sample"]) == 3
+          and r.json()["sample"][0]["keyword"] == "苹果")
+
+    # 只有表头 → 应当报错，而不是静默跑 0 次
+    r = requests.post(f"{BASE}/projects/{pid}/datasets",
+                      files={"file": ("empty.csv", "keyword,note\n".encode("utf-8"), "text/csv")},
+                      timeout=10)
+    check("只有表头的文件被拒（400）", r.status_code == 400, str(r.status_code))
+
+    # 文件名越界 → 应当被挡
+    r = requests.post(f"{BASE}/projects/{pid}/datasets",
+                      files={"file": ("../evil.csv", "a\n1\n".encode("utf-8"), "text/csv")},
+                      timeout=10)
+    check("数据文件名挡路径穿越", r.status_code == 400, str(r.status_code))
+
+    # 绑定数据文件并按行执行：URL 里用 ${keyword}，断言也用 ${keyword}（两者都要被解析）
+    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        "name": "数据驱动-逐行请求",
+        "type": "api",
+        "method": "GET",
+        "url": "https://httpbin.org/get?keyword=${keyword}",
+        "assertions_json": [
+            {"assertion_type": "response_body", "operator": "eq",
+             "expected_value": "${keyword}", "target": "$.args.keyword"},
+        ],
+        "data_file": "demo_params.csv",
+    }, timeout=10)
+    check("用例绑定数据文件", r.status_code == 201)
+    dd_case = r.json().get("id") if r.status_code == 201 else None
+
+    r = requests.post(f"{BASE}/cases/{dd_case}/run-data-driven", json={"env_id": env_id}, timeout=120)
+    check("按数据行执行", r.status_code == 200, r.text[:120] if r.status_code != 200 else "")
+    if r.status_code == 200:
+        run = r.json()
+        check("执行次数等于数据行数",
+              run["total"] == 3 and len(run["rows"]) == 3, f"total={run['total']}")
+        check("每行都通过（行变量在 URL 与断言里都被解析）",
+              run["passed"] == 3 and run["failed"] == 0,
+              f"{run['passed']}/{run['total']}")
+        check("row_index 依次编号",
+              [row["result_json"]["row_index"] for row in run["rows"]] == [1, 2, 3])
+        urls = [row["result_json"]["request"]["url"] for row in run["rows"]]
+        check("每行注入了各自的变量值",
+              urls == ["https://httpbin.org/get?keyword=苹果",
+                       "https://httpbin.org/get?keyword=香蕉",
+                       "https://httpbin.org/get?keyword=橙子"],
+              " | ".join(urls))
+
+    # 没绑数据文件的用例走该接口应当明确报错
+    r = requests.post(f"{BASE}/cases/{case_id}/run-data-driven", json={"env_id": env_id}, timeout=30)
+    check("未绑定数据文件时返回 400", r.status_code == 400, str(r.status_code))
+
+    r = requests.delete(f"{BASE}/projects/{pid}/datasets/demo_params.csv", timeout=10)
+    check("删除数据文件", r.status_code == 204)
+
 
 
 

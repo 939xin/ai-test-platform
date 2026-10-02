@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # 旧 PySide6 工具生成的几十份报告，混在一起列表页会很乱。已在 .gitignore 中。
     report_dir: str = str(BASE_DIR.parent / "reports" / "platform")
 
+    # ---------- 数据驱动 ----------
+    # data/datasets/{项目id}/ —— 参数化用的 CSV / Excel，按项目分目录避免同名互踩
+    dataset_dir: str = str(BASE_DIR.parent / "data" / "datasets")
+    dataset_max_bytes: int = 5 * 1024 * 1024  # 上传上限 5MB
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

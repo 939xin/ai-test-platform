@@ -5,7 +5,7 @@
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,8 +13,9 @@ from app.api.cases import get_case_or_404
 from app.api.environments import get_environment_or_404
 from app.database import get_db
 from app.models import Execution, TestCase
-from app.schemas.execution import ExecutionBrief, ExecutionOut, RunCaseRequest
+from app.schemas.execution import DataDrivenRunResult, ExecutionBrief, ExecutionOut, RunCaseRequest
 from app.services.api_executor import execute_case
+from app.services.dataset import load_rows
 
 router = APIRouter()
 
@@ -47,6 +48,22 @@ def _case_names(db: Session, case_ids: set[int]) -> dict[int, str]:
     if not case_ids:
         return {}
     return dict(db.execute(select(TestCase.id, TestCase.name).where(TestCase.id.in_(case_ids))).all())
+
+
+def _execution_out(execution: Execution, case_name: str | None) -> ExecutionOut:
+    return ExecutionOut(
+        id=execution.id,
+        project_id=execution.project_id,
+        plan_id=execution.plan_id,
+        case_id=execution.case_id,
+        case_name=case_name,
+        status=execution.status,
+        start_time=execution.start_time,
+        end_time=execution.end_time,
+        duration_ms=execution.duration_ms,
+        result_json=execution.result_json or {},
+        created_at=execution.created_at,
+    )
 
 
 @router.post(
@@ -89,6 +106,77 @@ def run_case(
     return execution
 
 
+@router.post("/cases/{case_id}/run-data-driven", response_model=DataDrivenRunResult,
+             summary="按数据文件逐行执行用例")
+def run_case_data_driven(
+    case_id: int,
+    payload: RunCaseRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    """一条用例按数据文件的每一行各跑一次；每行的列名当作运行时变量注入。
+
+    行数据走「运行时变量」通道，优先级高于环境的全局变量。
+    """
+    case = get_case_or_404(db, case_id)
+    payload = payload or RunCaseRequest()
+
+    if not case.data_file:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="该用例没有绑定数据文件")
+
+    try:
+        rows = load_rows(case.project_id, case.data_file)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="数据文件里没有可用的数据行（只有表头或内容为空）")
+
+    env_dict: dict = {}
+    if payload.env_id is not None:
+        env_dict = _env_to_dict(get_environment_or_404(db, payload.env_id))
+    global_vars = env_dict.get("variables_json") or {}
+
+    results: list[ExecutionOut] = []
+    for index, row in enumerate(rows, start=1):
+        execution = Execution(
+            project_id=case.project_id,
+            case_id=case.id,
+            status="running",
+            start_time=datetime.now(),
+        )
+        db.add(execution)
+        db.commit()
+        db.refresh(execution)
+
+        # 行数据覆盖全局变量：{**全局, **当前行}
+        merged_env = {**env_dict, "variables_json": {**global_vars, **row}}
+        result = execute_case(_case_to_dict(case), merged_env, timeout=payload.timeout)
+        result["row_index"] = index
+        result["row_data"] = row
+
+        execution.status = result["status"]
+        execution.end_time = datetime.now()
+        execution.duration_ms = result["duration_ms"]
+        execution.result_json = result
+        db.commit()
+        db.refresh(execution)
+
+        results.append(_execution_out(execution, case.name))
+
+    return DataDrivenRunResult(
+        case_id=case.id,
+        case_name=case.name,
+        data_file=case.data_file,
+        total=len(results),
+        passed=sum(1 for r in results if r.status == "pass"),
+        failed=sum(1 for r in results if r.status != "pass"),
+        rows=results,
+    )
+
+
 @router.get("/executions", response_model=list[ExecutionBrief], summary="执行历史")
 def list_executions(
     project_id: int | None = Query(None),
@@ -126,21 +214,7 @@ def list_executions(
 def get_execution(execution_id: int, db: Session = Depends(get_db)):
     execution = db.get(Execution, execution_id)
     if execution is None:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="执行记录不存在")
 
     name_map = _case_names(db, {execution.case_id} if execution.case_id else set())
-    return ExecutionOut(
-        id=execution.id,
-        project_id=execution.project_id,
-        plan_id=execution.plan_id,
-        case_id=execution.case_id,
-        case_name=name_map.get(execution.case_id),
-        status=execution.status,
-        start_time=execution.start_time,
-        end_time=execution.end_time,
-        duration_ms=execution.duration_ms,
-        result_json=execution.result_json or {},
-        created_at=execution.created_at,
-    )
+    return _execution_out(execution, name_map.get(execution.case_id))

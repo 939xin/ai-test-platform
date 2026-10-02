@@ -2,7 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
+import DatasetManagerDialog from '@/components/DatasetManagerDialog.vue'
 import { createCase, getCase, updateCase } from '@/api/case'
+import { listDatasets } from '@/api/dataset'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -22,6 +24,10 @@ const loading = ref(false)
 const submitting = ref(false)
 const formRef = ref(null)
 const activeTab = ref('request')
+
+// 当前项目的数据文件（供「数据文件」下拉选择）
+const datasets = ref([])
+const datasetDialogVisible = ref(false)
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
 const BODY_TYPES = [
@@ -73,6 +79,7 @@ const form = reactive({
   auth_value: '',
   assertions: [],
   extracts: [],
+  data_file: '',
 })
 
 const rules = {
@@ -96,11 +103,26 @@ function resetForm() {
     auth_value: '',
     assertions: [{ assertion_type: 'status_code', operator: 'eq', target: '', expected_value: '200' }],
     extracts: [],
+    data_file: '',
   })
   activeTab.value = 'request'
 }
 
+async function loadDatasets() {
+  if (props.projectId == null) {
+    datasets.value = []
+    return
+  }
+  datasets.value = await listDatasets(props.projectId)
+}
+
+/** 在管理弹窗里选用了某个文件，直接填到表单上。 */
+function onDatasetPicked(filename) {
+  form.data_file = filename
+}
+
 async function load() {
+  await loadDatasets()
   if (!isEdit.value) {
     resetForm()
     return
@@ -123,6 +145,7 @@ async function load() {
       auth_value: data.auth_value,
       assertions: (data.assertions_json || []).map((a) => ({ ...a })),
       extracts: (data.extract_json || []).map((e) => ({ ...e })),
+      data_file: data.data_file || '',
     })
   } finally {
     loading.value = false
@@ -172,6 +195,7 @@ async function submit() {
           source: e.source || 'body',
           expression: e.source === 'status' ? '' : String(e.expression ?? '').trim(),
         })),
+      data_file: form.data_file || '',
     }
     if (isEdit.value) {
       await updateCase(props.caseId, payload)
@@ -222,6 +246,25 @@ watch(visible, (open) => {
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
+        </el-form-item>
+        <el-form-item label="数据文件" class="span-2">
+          <div class="data-file-row">
+            <el-select
+              v-model="form.data_file"
+              placeholder="不使用（单次执行）"
+              clearable
+              filterable
+              class="data-file-select"
+            >
+              <el-option
+                v-for="d in datasets"
+                :key="d.filename"
+                :label="`${d.filename}（${d.rows} 行）`"
+                :value="d.filename"
+              />
+            </el-select>
+            <el-button @click="datasetDialogVisible = true">管理数据文件</el-button>
+          </div>
         </el-form-item>
       </div>
 
@@ -347,6 +390,12 @@ watch(visible, (open) => {
       <el-button @click="visible = false">取消</el-button>
       <el-button type="primary" :loading="submitting" @click="submit">保存</el-button>
     </template>
+
+    <DatasetManagerDialog
+      v-model="datasetDialogVisible"
+      :project-id="projectId"
+      @pick="onDatasetPicked"
+    />
   </el-drawer>
 </template>
 
@@ -359,6 +408,17 @@ watch(visible, (open) => {
 
 .span-2 {
   grid-column: span 2;
+}
+
+.data-file-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.data-file-select {
+  flex: 1;
+  min-width: 0;
 }
 
 .editor-tabs {
