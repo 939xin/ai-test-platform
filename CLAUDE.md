@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 说明 | 状态 |
 |---|---|---|
-| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–7） |
+| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–8） |
 | `app/` + `main.py` 等 | **旧** PySide6 桌面版 | 冻结，作为引擎复用源 |
 
 新工程的执行引擎（`backend/app/services/`）大量复用旧桌面版 `app/engine`、`app/utils`
@@ -55,6 +55,9 @@ npm run dev                     # http://localhost:5173，/api 已代理到 8000
 ```
 
 默认账号 `admin` / `admin123`。后端接口文档在 http://localhost:8000/docs。
+
+> 接口已做全站 JWT 校验（Day 8）。在 `/docs` 上调试要先点右上角 **Authorize**
+> 填 `access_token`，否则业务接口一律 401。
 
 ### 新工程架构
 
@@ -83,6 +86,22 @@ MySQL 8 (Docker, 3307)
 - 项目 id 走 query 传递（`?project=29`），刷新不丢
 - Web 步骤的**操作与字段规格定义在后端** `services/web_executor.py` 的 `ACTION_SPEC`，
   `/api/web/status` 下发，前端照着渲染。**新增操作只改后端规格即可，不要在前端硬编码字段判断**
+
+### 全站鉴权（Day 8 起）
+
+接口已统一校验 JWT，**守卫不挂在各个路由函数上**，而是集中在 `main.py` 的
+`include_router(..., dependencies=guard)` —— 这样 11 个路由模块一行都不用改，
+豁免清单也只在 `main.py` 一处看得见。
+
+- 依赖实现：`api/deps.py` 的 `get_current_user`（验签 + 确认 `sub` 用户还在）
+- **新增路由模块时，记得在 `main.py` 里一起挂上 `dependencies=guard`**，否则它默认是裸奔的
+- 豁免只有四类，都是有理由的：`/api/auth/login`（还没登录）、`/api/health`
+  （`start.bat` 与前端登录前探活）、`/api/demo/*`（Selenium 直接打开）、
+  报告 HTML 与截图两条路由（拆在 `reports.public_router`）
+- 报告的豁免是**被迫的、不是偏好**：`window.open` 与 `<img src>` 走浏览器导航，
+  任何前端写法都带不上 `Authorization` 头。这两条路由各自有 `../` 越界防护兜底
+- 前端登录态在 `api/session.js`（单独一层是为了避开 `auth ↔ request` 循环引用）；
+  `request.js` 收到 401 会清登录态并整页跳登录页
 
 ### 前端规范（用户明确要求，必须遵守）
 
@@ -300,17 +319,17 @@ UI 层 (PySide6)          用户操作 → 写 DB
 
 ### 新平台（当前在做）
 
-1. ⚠️ **全站接口未校验 JWT** —— 登录能签发、前端也带上了，但后端没有一处 `Depends`。
-2. 📝 **两个占位页没做** —— AI 助手 / 设置（各 11 行），
+1. 📝 **两个占位页没做** —— AI 助手 / 设置（各 11 行），
    且文案还写着「Day 4/5/6 实现」这类过时的日期承诺。
-3. 📝 **列表没有分页** —— 接口一次性返回全部；要加得动后端（limit/offset + total）。
-4. 📝 **Web 用例不支持场景串联 / 数据驱动** —— 这两条链路只走接口执行器。
-5. 📝 **窄视口表格横向溢出** —— 操作列已 `fixed="right"` 保证可点，整体仍需横向滚动。
+2. 📝 **列表没有分页** —— 接口一次性返回全部；要加得动后端（limit/offset + total）。
+3. 📝 **Web 用例不支持场景串联 / 数据驱动** —— 这两条链路只走接口执行器。
+4. 📝 **窄视口表格横向溢出** —— 操作列已 `fixed="right"` 保证可点，整体仍需横向滚动。
 
 ### 已完成，别当待办
 
 Web UI 执行已迁移（Day 4）、`_capture_screenshot()` 老 bug 已修（Day 4）、
-测试计划已实现（Day 5）、场景混入 Web 用例已修（Day 6）、缺陷管理已实现（Day 7）。
+测试计划已实现（Day 5）、场景混入 Web 用例已修（Day 6）、缺陷管理已实现（Day 7）、
+**全站 JWT 校验 + 登录页**已实现（Day 8）。
 
 ### 旧桌面版（已冻结）
 

@@ -71,6 +71,24 @@
 - [x] **修掉统一报错只认字符串 `detail` 的 bug** —— FastAPI 的 422 返回数组、
       409 返回对象，原来都会被渲染成 `[object Object]`（422 那条是旧有隐患）
 
+### Day 8 · 全站 JWT 校验
+- [x] `api/deps.py` 的 `get_current_user`：验签 + 确认 `sub` 用户还在，
+      没带 token / 伪造 / 过期 / 用户已删 一律 401（带 `WWW-Authenticate: Bearer`）
+- [x] 守卫**不挂在各路由函数上**，集中在 `main.py` 的
+      `include_router(..., dependencies=guard)` —— 11 个路由模块一行未改
+- [x] 四类豁免：`/api/auth/login`、`/api/health`、`/api/demo/*`，
+      以及报告 HTML 与截图（拆到 `reports.public_router`）
+- [x] **前端补齐登录态**（此前前端**完全没有登录页**，只加后端校验会把整个 UI 打死）：
+      `views/LoginView.vue` 登录页、`router` 双向守卫（未登录踢回登录页并带 `redirect`）、
+      `AppLayout` 顶栏显示用户名 + 退出登录
+- [x] `request.js` 401 拦截：清登录态 → 提示 → 整页跳登录页。
+      多个并发 401 只提示一次、只跳一次；登录接口自身的 401（密码错）不按会话过期处理
+- [x] `api/session.js` 单独一层存放登录态，避开 `auth ↔ request` 循环引用
+- [x] `verify_all.py` 的 104 处裸调改走带 token 的 `requests.Session()`，
+      并补 4 项边界断言（无 token 401 / 伪造 token 401 / 健康检查免鉴权 / 带 token 正常）
+- [x] **修掉会话过期提示看不见的问题** —— 原来 `ElMessage.warning` 之后立刻整页跳转，
+      页面先卸载，提示根本来不及渲染
+
 ### 验收规模
 
 | 阶段 | 验收项数 |
@@ -80,11 +98,11 @@
 | Day 4 | 82 |
 | Day 5 | 98 |
 | Day 6 | 122 |
-| Day 7 | **144（全过）** |
+| Day 7 | 144 |
+| Day 8 | **148（全过）** |
 
 ### 已知未做（v2.0.0 范围内）
 
-- [ ] 全站接口未校验 JWT（登录能签发，后端没有一处 `Depends`）
 - [ ] AI 助手 / 设置两个页面仍是占位
 - [ ] 列表没有分页（接口一次性返回全部，8 个列表页都是）
 - [ ] Web 用例不支持场景串联与数据驱动
@@ -149,11 +167,9 @@
 
 ### 新平台待做
 
-- [ ] 缺陷管理（表已建，缺 schema / api / 前端）
 - [ ] AI 助手（DeepSeek 接入：用例生成 / 失败分析）
 - [ ] 设置页
 - [ ] 列表分页（接口目前一次性返回全部）
-- [ ] 全站接口校验 JWT
 - [ ] Web 用例支持场景串联与数据驱动
 - [ ] Setup/Teardown（前置步骤 + 后置步骤）—— 沿自桌面版计划，两版都未做
 - [ ] 定时执行 —— `test_plan.schedule` 字段已在 Day 5 删除，要做需引入常驻调度器，是独立工程

@@ -6,7 +6,7 @@
 
 **项目 → 环境 → 用例 → 执行 → 报告 → 缺陷 → AI 辅助**
 
-> 当前已完成闭环的前六环；AI 辅助仍是占位页，见文末「开发状态」。
+> 当前已完成闭环的前七环；AI 辅助仍是占位页，见文末「开发状态」。
 >
 > 本仓库另有一套**已冻结的 PySide6 桌面版**（`app/`），执行引擎的断言、变量解析、
 > 请求构造、Selenium 步骤执行等逻辑复用自它，改引擎时两边都要看一眼。
@@ -51,7 +51,7 @@
 
 **关于 `services/` 层**：执行引擎的断言逻辑、变量解析、请求构造、Selenium 步骤执行等，
 复用自既有的桌面版实现，剥离了原桌面框架的线程外壳后改为无状态服务，供 FastAPI 直接调用。
-整套引擎现在由 `backend/scripts/verify_all.py` 的 122 项验收覆盖。
+整套引擎现在由 `backend/scripts/verify_all.py` 的 148 项验收覆盖。
 
 ---
 
@@ -95,6 +95,11 @@ npm run dev
 - 健康检查：http://localhost:8000/api/health
 - 默认账号：`admin` / `admin123`
 
+> 打开 Web UI 会先落到登录页。接口已做全站 JWT 校验，在 `/docs` 上调试要先点
+> 右上角 **Authorize** 填入登录返回的 `access_token`，否则业务接口一律返回 401。
+> 只有四类不校验：`/api/auth/login`、`/api/health`、`/api/demo/*`，以及报告 HTML
+> 与报告里的截图 —— 后两者是浏览器直接导航打开的，带不了 `Authorization` 头。
+
 ---
 
 ## 项目结构
@@ -122,10 +127,11 @@ npm run dev
 │       │   ├── WebStepEditor.vue     # 步骤编排器（31 种操作）
 │       │   └── ...                   # PageHeader / StatusTag / 各编辑抽屉与弹窗
 │       ├── views/              # 页面
+│       │   ├── LoginView.vue         # 登录页（在 AppLayout 之外，独立全屏）
 │       │   ├── ApiCaseList.vue       # 接口测试列表
 │       │   ├── WebCaseList.vue       # UI 测试列表
 │       │   ├── CaseEditor.vue        # 用例全屏编辑页（两种类型共用）
-│       │   └── ...                   # 项目/场景/计划/执行中心/报告/环境
+│       │   └── ...                   # 项目/场景/计划/执行中心/报告/环境/缺陷
 │       ├── router/
 │       └── styles/             # 设计令牌（改配色只改这里）
 ├── app/                        # 已冻结的桌面版源码（引擎复用来源）
@@ -150,11 +156,11 @@ npm run dev
 
 ## 开发状态
 
-> 更新时间：2026-10-03（Day 7）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
+> 更新时间：2026-10-03（Day 8）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
 
 | 模块 | 状态 |
 |---|---|
-| 工程骨架 / 数据库 / 认证 | ✅ 完成（登录能签发 JWT，但**接口尚未统一校验**） |
+| 工程骨架 / 数据库 / 认证 | ✅ 完成（JWT 全站校验 + 登录页 + 路由守卫；报告与截图路由豁免，因为浏览器直接导航带不了 header） |
 | 执行引擎（接口 + Web UI） | ✅ 完成 |
 | 项目管理 / 环境变量 | ✅ 完成 |
 | 用例管理（接口 / UI 两条独立线路） | ✅ 完成 |
@@ -169,8 +175,8 @@ npm run dev
 ### 验收
 
 ```bash
-cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 144 项，需后端已启动
+cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 148 项，需后端已启动
 ```
 
-前端改动后建议用浏览器过一遍 13 条路由，确认无 console 报错与失败请求。
+前端改动后建议用浏览器过一遍 13 条业务路由（外加登录页），确认无 console 报错与失败请求。
 
