@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 说明 | 状态 |
 |---|---|---|
-| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–6） |
+| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–7） |
 | `app/` + `main.py` 等 | **旧** PySide6 桌面版 | 冻结，作为引擎复用源 |
 
 新工程的执行引擎（`backend/app/services/`）大量复用旧桌面版 `app/engine`、`app/utils`
@@ -301,7 +301,7 @@ UI 层 (PySide6)          用户操作 → 写 DB
 ### 新平台（当前在做）
 
 1. ⚠️ **全站接口未校验 JWT** —— 登录能签发、前端也带上了，但后端没有一处 `Depends`。
-2. 📝 **三个占位页没做** —— 缺陷管理 / AI 助手 / 设置（各 11 行），
+2. 📝 **两个占位页没做** —— AI 助手 / 设置（各 11 行），
    且文案还写着「Day 4/5/6 实现」这类过时的日期承诺。
 3. 📝 **列表没有分页** —— 接口一次性返回全部；要加得动后端（limit/offset + total）。
 4. 📝 **Web 用例不支持场景串联 / 数据驱动** —— 这两条链路只走接口执行器。
@@ -310,7 +310,7 @@ UI 层 (PySide6)          用户操作 → 写 DB
 ### 已完成，别当待办
 
 Web UI 执行已迁移（Day 4）、`_capture_screenshot()` 老 bug 已修（Day 4）、
-测试计划已实现（Day 5）、场景混入 Web 用例已修（Day 6）。
+测试计划已实现（Day 5）、场景混入 Web 用例已修（Day 6）、缺陷管理已实现（Day 7）。
 
 ### 旧桌面版（已冻结）
 
