@@ -21,7 +21,17 @@ const visible = computed({
 
 const isEdit = computed(() => props.planId != null)
 
+/**
+ * 选择器一次取多少条用例。
+ *
+ * 用例列表接口现在分页了（默认 20 条），选择器不能只列出一页，否则后面那些
+ * 用例根本挑不到。这里直接顶到后端上限（MAX_PAGE_SIZE = 200）。
+ * 超过 200 条时下面会显式提示「只列出前 N 条」—— 悄悄少几条比慢更难查。
+ */
+const PICKER_LIMIT = 200
+
 const cases = ref([])
+const caseTotal = ref(0)
 const environments = ref([])
 const loading = ref(false)
 const submitting = ref(false)
@@ -79,11 +89,12 @@ function typeLabel(type) {
 async function load() {
   loading.value = true
   try {
-    const [caseList, envList] = await Promise.all([
-      listCases(props.projectId),
+    const [casePage, envList] = await Promise.all([
+      listCases(props.projectId, { limit: PICKER_LIMIT }),
       listEnvironments(props.projectId),
     ])
-    cases.value = caseList
+    cases.value = casePage.items
+    caseTotal.value = casePage.total
     environments.value = envList
     keyword.value = ''
     typeFilter.value = ''
@@ -112,14 +123,13 @@ async function submit() {
   }
   submitting.value = true
   try {
-    // 按用例列表的原有顺序提交，顺序稳定（计划本身不依赖顺序）
+    // 直接从勾选列表提交，**不要**拿 cases 过滤一遍：选择器只加载了前 PICKER_LIMIT 条，
+    // 编辑一个用例更多的计划时，用 cases 过滤会把「已勾选但没加载进来」的用例静默删掉。
     const payload = {
       name: form.name,
       description: form.description,
       env_id: form.env_id,
-      cases: cases.value
-        .filter((c) => selectedIds.value.includes(c.id))
-        .map((c) => ({ case_id: c.id })),
+      cases: selectedIds.value.map((id) => ({ case_id: id })),
     }
     if (isEdit.value) await updatePlan(props.planId, payload)
     else await createPlan(props.projectId, payload)
@@ -166,6 +176,11 @@ watch(visible, (open) => {
               已选 <b class="mono">{{ selectedCount }}</b> 条
             </span>
           </div>
+
+          <p v-if="caseTotal > cases.length" class="truncated">
+            该项目共 {{ caseTotal }} 条用例，选择器只列出前 {{ cases.length }} 条，
+            其余的在下表里挑不到（已勾选的不会丢）。
+          </p>
 
           <el-table :data="filteredCases" max-height="330" size="small" stripe>
             <el-table-column label="选择" width="58">
@@ -224,6 +239,14 @@ watch(visible, (open) => {
   margin: 8px 0 0;
   font-size: 12px;
   color: var(--text-3);
+  line-height: 1.6;
+}
+
+/* 用例被截断时才出现 —— 用告警色，别让它混在下面那行灰字提示里 */
+.truncated {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--signal-warn);
   line-height: 1.6;
 }
 </style>

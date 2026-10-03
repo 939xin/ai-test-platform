@@ -255,7 +255,7 @@ def main() -> int:
 
     # 列表接口必须带断言/提取的条数，否则列表页那两列永远显示 0（踩过的真实 bug）
     r = SESSION.get(f"{BASE}/projects/{pid}/cases", timeout=10)
-    row = next((c for c in r.json() if c["id"] == case_id), {})
+    row = next((c for c in r.json()["items"] if c["id"] == case_id), {})
     check("列表接口带断言与提取条数（列表页展示用）",
           r.status_code == 200
           and len(row.get("assertions_json") or []) == 2
@@ -264,10 +264,10 @@ def main() -> int:
           "data_file" in row, str(sorted(row.keys()))[:120])
 
     r = SESSION.get(f"{BASE}/projects/{pid}/cases", params={"type": "api"}, timeout=10)
-    check("按类型筛选", r.status_code == 200 and len(r.json()) == 1)
+    check("按类型筛选", r.status_code == 200 and len(r.json()["items"]) == 1)
 
     r = SESSION.get(f"{BASE}/projects/{pid}/cases", params={"keyword": "验收"}, timeout=10)
-    check("按中文关键字筛选", r.status_code == 200 and len(r.json()) == 1)
+    check("按中文关键字筛选", r.status_code == 200 and len(r.json()["items"]) == 1)
 
     section("Day 2 · 执行闭环 ★")
     r = SESSION.post(f"{BASE}/cases/{case_id}/run", json={"env_id": env_id, "timeout": 30}, timeout=60)
@@ -296,16 +296,17 @@ def main() -> int:
         execution_id = None
 
     r = SESSION.get(f"{BASE}/executions", params={"project_id": pid}, timeout=10)
-    check("执行历史可查", r.status_code == 200 and any(e["id"] == execution_id for e in r.json()))
-    row = next((e for e in r.json() if e["id"] == execution_id), {})
+    check("执行历史可查",
+          r.status_code == 200 and any(e["id"] == execution_id for e in r.json()["items"]))
+    row = next((e for e in r.json()["items"] if e["id"] == execution_id), {})
     check("历史列表带用例名", row.get("case_name") == "GET /get 验收用例", row.get("case_name"))
 
     r = SESSION.get(f"{BASE}/executions", params={"project_id": pid, "status": "pass"}, timeout=10)
     check("按状态筛选执行记录",
-          r.status_code == 200 and any(e["id"] == execution_id for e in r.json()))
+          r.status_code == 200 and any(e["id"] == execution_id for e in r.json()["items"]))
     r = SESSION.get(f"{BASE}/executions", params={"project_id": pid, "status": "fail"}, timeout=10)
     check("状态筛选排除不匹配记录",
-          r.status_code == 200 and all(e["status"] == "fail" for e in r.json()))
+          r.status_code == 200 and all(e["status"] == "fail" for e in r.json()["items"]))
 
     r = SESSION.get(f"{BASE}/executions/{execution_id}", timeout=10)
     check("执行详情带用例名与结果",
@@ -315,6 +316,7 @@ def main() -> int:
 
     section("Day 3 · 测试报告")
     report_name = None
+    burst_report_names = []
     r = SESSION.post(f"{BASE}/projects/{pid}/reports",
                       json={"execution_ids": [execution_id]}, timeout=30)
     check("生成 HTML 报告", r.status_code == 200 and r.json().get("filename", "").endswith(".html"))
@@ -333,12 +335,28 @@ def main() -> int:
               and "响应体" in r.text
               and "测试报告" in r.text)
 
-        r = SESSION.get(f"{BASE}/reports", timeout=10)
+        r = SESSION.get(f"{BASE}/reports", params={"limit": 200}, timeout=10)
         check("报告列表能查到新报告",
-              r.status_code == 200 and any(f["filename"] == report_name for f in r.json()))
+              r.status_code == 200
+              and any(f["filename"] == report_name for f in r.json()["items"]))
 
         r = SESSION.get(f"{BASE}/reports/..%2Fconfig.py", timeout=10)
         check("报告接口挡住路径穿越", r.status_code in (400, 404))
+
+        # 报告文件名只精确到秒。连发三次如果撞名，磁盘上只会剩最后一份 ——
+        # 用户连点两次「生成报告」，前一份就被静默吃掉了，页面上完全看不出来。
+        burst = [
+            SESSION.post(f"{BASE}/projects/{pid}/reports",
+                         json={"execution_ids": [execution_id]}, timeout=30).json()["filename"]
+            for _ in range(3)
+        ]
+        burst_report_names = burst  # 收尾时跟着 report_name 一起删
+        check("同一秒连生多份报告自动错开文件名",
+              len(set(burst)) == len(burst), " / ".join(burst))
+
+        r = SESSION.get(f"{BASE}/reports", params={"limit": 200}, timeout=10)
+        listed = {f["filename"] for f in r.json()["items"]}
+        check("连生的报告都真的落盘了", all(name in listed for name in burst))
 
     # ==================== Day 3 · 场景串联（3b）====================
     section("Day 3 · 场景串联 ★")
@@ -395,7 +413,7 @@ def main() -> int:
           and [s["step_order"] for s in detail.get("steps", [])] == [1, 2])
 
     r = SESSION.get(f"{BASE}/projects/{pid}/scenarios", timeout=10)
-    row = next((s for s in r.json() if s["id"] == scenario_id), {})
+    row = next((s for s in r.json()["items"] if s["id"] == scenario_id), {})
     check("场景列表带步骤数", r.status_code == 200 and row.get("step_count") == 2)
 
     r = SESSION.post(f"{BASE}/scenarios/{scenario_id}/run", json={"env_id": env_id}, timeout=90)
@@ -414,7 +432,7 @@ def main() -> int:
               run["variables"].get("echo_url") == "https://httpbin.org/get")
 
         r2 = SESSION.get(f"{BASE}/executions", params={"project_id": pid}, timeout=10)
-        recorded = {e["case_id"] for e in r2.json()}
+        recorded = {e["case_id"] for e in r2.json()["items"]}
         check("场景各步骤落了执行记录",
               step1_case in recorded and step2_case in recorded)
 
@@ -777,7 +795,7 @@ def main() -> int:
     plan_id = r.json().get("id") if r.status_code == 201 else None
 
     r = SESSION.get(f"{BASE}/projects/{pid}/plans", timeout=10)
-    row = next((p for p in r.json() if p["id"] == plan_id), {})
+    row = next((p for p in r.json()["items"] if p["id"] == plan_id), {})
     check("计划列表带用例数与环境名",
           row.get("case_count") == len(plan_case_ids) and row.get("env_name") is not None,
           f"{row.get('case_count')} 条 / 环境 {row.get('env_name')}")
@@ -800,8 +818,10 @@ def main() -> int:
         check("每条执行记录都带 plan_id",
               all(c["plan_id"] == plan_id for c in run["cases"]),
               str([c["plan_id"] for c in run["cases"]]))
+        # limit 给足：计划一次跑出多条执行记录，默认 20 条一页可能盖不全
         history = {e["id"] for e in SESSION.get(
-            f"{BASE}/executions", params={"project_id": pid}, timeout=10).json()}
+            f"{BASE}/executions", params={"project_id": pid, "limit": 200},
+            timeout=10).json()["items"]}
         check("计划产生的执行记录出现在执行中心",
               all(c["id"] in history for c in run["cases"]))
         web_execution_ids.extend(c["id"] for c in run["cases"])
@@ -894,16 +914,19 @@ def main() -> int:
     check("通过的执行记录拒绝提缺陷（400）", r.status_code == 400, r.text[:80])
 
     r = SESSION.get(f"{BASE}/projects/{pid}/defects", timeout=10)
-    check("缺陷列表", r.status_code == 200 and any(d["id"] == defect_id for d in r.json()))
-    row = next((d for d in r.json() if d["id"] == defect_id), {})
+    check("缺陷列表",
+          r.status_code == 200 and any(d["id"] == defect_id for d in r.json()["items"]))
+    row = next((d for d in r.json()["items"] if d["id"] == defect_id), {})
     check("列表带关联用例名", row.get("case_name") == "验收·注定失败用例", str(row.get("case_name")))
 
     r = SESSION.get(f"{BASE}/projects/{pid}/defects", params={"status": "新建"}, timeout=10)
-    check("按状态筛选", r.status_code == 200 and all(d["status"] == "新建" for d in r.json()))
+    check("按状态筛选", r.status_code == 200
+          and all(d["status"] == "新建" for d in r.json()["items"]))
     r = SESSION.get(f"{BASE}/projects/{pid}/defects", params={"keyword": "注定失败"}, timeout=10)
-    check("按标题关键字筛选", r.status_code == 200 and len(r.json()) == 1, f"{len(r.json())} 条")
+    check("按标题关键字筛选", r.status_code == 200 and len(r.json()["items"]) == 1,
+          f"{len(r.json()['items'])} 条")
     r = SESSION.get(f"{BASE}/projects/{pid}/defects", params={"severity": "致命"}, timeout=10)
-    check("按严重程度筛选排除不匹配", r.status_code == 200 and len(r.json()) == 0)
+    check("按严重程度筛选排除不匹配", r.status_code == 200 and len(r.json()["items"]) == 0)
 
     r = SESSION.put(f"{BASE}/defects/{defect_id}",
                      json={"status": "处理中", "severity": "严重"}, timeout=10)
@@ -935,6 +958,81 @@ def main() -> int:
           and r.json()["execution_id"] == fail_exec_id,
           f"case_id={r.json().get('case_id')}")
 
+    # ==================== 分页 ====================
+    section("列表分页 · 参数与边界")
+    # 单独建一个项目塞 25 条用例来验分页。用主项目的话条数会被前面各段影响，
+    # 断言里的具体数字就不稳了 —— 这样每次跑都是确定的 25 条。
+    page_pid = SESSION.post(f"{BASE}/projects", json={"name": "验收·分页"},
+                            timeout=10).json()["id"]
+    try:
+        for i in range(25):
+            SESSION.post(f"{BASE}/projects/{page_pid}/cases",
+                         json={"name": f"分页用例 {i + 1:02d}", "type": "api",
+                               "method": "GET", "url": "https://httpbin.org/get"},
+                         timeout=10)
+
+        cases_url = f"{BASE}/projects/{page_pid}/cases"
+
+        r = SESSION.get(cases_url, timeout=10)
+        body = r.json()
+        check("默认一页 20 条", r.status_code == 200 and len(body["items"]) == 20,
+              f"{len(body.get('items', []))} 条")
+        check("total 是全部条数、不受 limit 影响", body["total"] == 25,
+              f"total={body.get('total')}")
+
+        r = SESSION.get(cases_url, params={"limit": 10, "offset": 10}, timeout=10)
+        page2 = r.json()
+        check("limit + offset 生效",
+              len(page2["items"]) == 10 and page2["total"] == 25,
+              f"{len(page2['items'])} 条 / total={page2['total']}")
+
+        r = SESSION.get(cases_url, params={"limit": 10}, timeout=10)
+        first_ids = {c["id"] for c in r.json()["items"]}
+        check("翻页取到的是另一批数据",
+              first_ids.isdisjoint({c["id"] for c in page2["items"]}))
+
+        r = SESSION.get(cases_url, params={"limit": 10, "offset": 20}, timeout=10)
+        check("最后一页不足一整页也正常", len(r.json()["items"]) == 5)
+
+        r = SESSION.get(cases_url, params={"offset": 999}, timeout=10)
+        tail = r.json()
+        check("offset 越界返回空数组且 total 不变",
+              r.status_code == 200 and tail["items"] == [] and tail["total"] == 25,
+              str(tail)[:80])
+
+        r = SESSION.get(cases_url, params={"type": "web", "limit": 5}, timeout=10)
+        check("筛选与分页叠加时 total 只算筛选后的",
+              r.json()["total"] == 0 and r.json()["items"] == [])
+
+        r = SESSION.get(cases_url, params={"limit": 0}, timeout=10)
+        check("limit=0 被拒（422）", r.status_code == 422, f"status={r.status_code}")
+        r = SESSION.get(cases_url, params={"limit": 201}, timeout=10)
+        check("limit 超上限被拒（422）", r.status_code == 422, f"status={r.status_code}")
+        r = SESSION.get(cases_url, params={"offset": -1}, timeout=10)
+        check("offset 为负被拒（422）", r.status_code == 422, f"status={r.status_code}")
+
+        # 执行统计：口径必须和列表的 total 一致，且不能被 limit 带偏
+        # （执行中心那张统计卡原来拿「加载到的那一页」在算，分页后会翻一页变一次）
+        stats = SESSION.get(f"{BASE}/executions/stats",
+                            params={"project_id": pid}, timeout=10).json()
+        listed = SESSION.get(f"{BASE}/executions",
+                             params={"project_id": pid, "limit": 1}, timeout=10).json()
+        check("执行统计与列表 total 一致（limit=1 也不影响）",
+              stats.get("total") == listed.get("total"),
+              f"stats.total={stats.get('total')} list.total={listed.get('total')}")
+        check("执行统计的通过 + 失败 = 总数",
+              stats.get("passed", 0) + stats.get("failed", 0) == stats.get("total"),
+              str(stats))
+
+        # 不分页的三个接口（项目 / 环境 / 数据文件）必须还是裸数组 ——
+        # 它们同时是下拉数据源，一旦改成 {items,total} 前端选择器会静默取空
+        r = SESSION.get(f"{BASE}/projects", timeout=10)
+        check("项目列表仍是裸数组（下拉数据源，不分页）", isinstance(r.json(), list))
+        r = SESSION.get(f"{BASE}/projects/{pid}/environments", timeout=10)
+        check("环境列表仍是裸数组", isinstance(r.json(), list))
+    finally:
+        SESSION.delete(f"{BASE}/projects/{page_pid}", timeout=10)
+
     # ==================== 清理 ====================
     section("清理验收数据")
     if case_id:
@@ -947,7 +1045,8 @@ def main() -> int:
     check("级联删除生效（项目 404）", r.status_code == 404)
 
     # 验收生成的报告文件与截图目录一并清掉，避免 reports/platform 越积越多
-    for name in (report_name, web_report_name):
+    # burst_report_names 是「同一秒连生多份」那条断言额外产出的，一起收走
+    for name in (report_name, web_report_name, *burst_report_names):
         if not name:
             continue
         report_file = REPORT_ROOT / name

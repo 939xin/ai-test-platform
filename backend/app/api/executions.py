@@ -7,18 +7,21 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.cases import get_case_or_404
 from app.api.environments import get_environment_or_404
+from app.api.pagination import PageParams, paginate
 from app.config import settings
 from app.database import get_db
 from app.models import Execution, TestCase
+from app.schemas.common import Page
 from app.schemas.execution import (
     DataDrivenRunResult,
     ExecutionBrief,
     ExecutionOut,
+    ExecutionStats,
     RunCaseRequest,
     RunWebRequest,
 )
@@ -259,26 +262,68 @@ def run_case_data_driven(
     )
 
 
-@router.get("/executions", response_model=list[ExecutionBrief], summary="执行历史")
+def _execution_filters(
+    project_id: int | None, case_id: int | None, status_value: str | None
+) -> list:
+    """列表与统计接口共用的筛选条件。
+
+    两处要是各写一份，早晚会出现「列表筛了、统计没筛」的口径不一致。
+    """
+    conds = []
+    if project_id is not None:
+        conds.append(Execution.project_id == project_id)
+    if case_id is not None:
+        conds.append(Execution.case_id == case_id)
+    if status_value:
+        conds.append(Execution.status == status_value)
+    return conds
+
+
+# ⚠️ 这条必须声明在 /executions/{execution_id} 之前：
+# FastAPI 按声明顺序匹配，否则 "stats" 会被当成执行 id 去解析成整数，直接 422。
+@router.get("/executions/stats", response_model=ExecutionStats, summary="执行统计（全量）")
+def execution_stats(
+    project_id: int | None = Query(None),
+    case_id: int | None = Query(None),
+    status: str | None = Query(None, description="按执行状态筛选：pass / fail / error / running"),
+    db: Session = Depends(get_db),
+):
+    """统计**筛选后的全部**记录，不受分页影响。
+
+    执行中心的统计卡原来拿加载到的那一页在算，分页之后会变成「翻一页数字就变」——
+    所以统计口径必须落在这里，而不是前端对当前页 reduce。
+    """
+    conds = _execution_filters(project_id, case_id, status)
+    stmt = select(Execution.status, func.count()).group_by(Execution.status)
+    if conds:
+        stmt = stmt.where(*conds)
+    counts = dict(db.execute(stmt).all())
+
+    # fail 与 error 合并成一个「失败」口径 —— 与执行中心那张卡一致
+    return ExecutionStats(
+        total=sum(counts.values()),
+        passed=counts.get("pass", 0),
+        failed=counts.get("fail", 0) + counts.get("error", 0),
+    )
+
+
+@router.get("/executions", response_model=Page[ExecutionBrief], summary="执行历史（分页）")
 def list_executions(
     project_id: int | None = Query(None),
     case_id: int | None = Query(None),
     status: str | None = Query(None, description="按执行状态筛选：pass / fail / error / running"),
-    limit: int = Query(50, ge=1, le=500),
+    page: PageParams = Depends(),
     db: Session = Depends(get_db),
 ):
     stmt = select(Execution)
-    if project_id is not None:
-        stmt = stmt.where(Execution.project_id == project_id)
-    if case_id is not None:
-        stmt = stmt.where(Execution.case_id == case_id)
-    if status:
-        stmt = stmt.where(Execution.status == status)
-    rows = db.execute(stmt.order_by(Execution.id.desc()).limit(limit)).scalars().all()
+    conds = _execution_filters(project_id, case_id, status)
+    if conds:
+        stmt = stmt.where(*conds)
 
+    rows, total = paginate(db, stmt.order_by(Execution.id.desc()), page)
     name_map = _case_names(db, {row.case_id for row in rows if row.case_id is not None})
 
-    return [
+    return Page(items=[
         ExecutionBrief(
             id=row.id,
             project_id=row.project_id,
@@ -289,7 +334,7 @@ def list_executions(
             created_at=row.created_at,
         )
         for row in rows
-    ]
+    ], total=total)
 
 
 @router.get("/executions/{execution_id}", response_model=ExecutionOut, summary="执行详情")

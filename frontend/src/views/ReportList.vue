@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
+import PagePagination from '@/components/PagePagination.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { listProjects } from '@/api/project'
 import { listExecutions } from '@/api/execution'
@@ -15,6 +16,12 @@ const executions = ref([])
 const reports = ref([])
 const loading = ref(false)
 const generating = ref(false)
+
+// 只给「历史报告」分页。上面那张勾选表**不能**分页 ——
+// 报告要跨记录勾选，表头「全选」在分页下只选得到当前页，用户会以为全选了。
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 // 勾选中的执行记录 id
 const selectedIds = ref([])
@@ -45,17 +52,31 @@ async function loadExecutions() {
     executions.value = []
     return
   }
-  executions.value = await listExecutions({ project_id: currentProjectId.value, limit: 100 })
+  // 这张表是勾选用的，不分页，只取最近的 100 条（后端上限 200）
+  const data = await listExecutions({ project_id: currentProjectId.value, limit: 100 })
+  executions.value = data.items
   selectedIds.value = []
 }
 
 async function loadReports() {
   loading.value = true
   try {
-    reports.value = await listReports()
+    const data = await listReports({
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
+    })
+    reports.value = data.items
+    total.value = data.total
   } finally {
     loading.value = false
   }
+}
+
+/** 分页条回调：页码和每页条数由组件一次给全，避免两者先后生效导致多查一次。 */
+function onPageChange(payload) {
+  page.value = payload.page
+  pageSize.value = payload.pageSize
+  return loadReports()
 }
 
 async function generate() {
@@ -67,6 +88,8 @@ async function generate() {
   try {
     const res = await createReport(currentProjectId.value, { execution_ids: selectedIds.value })
     ElMessage.success(`报告已生成：${res.filename}`)
+    // 报告是按生成时间倒序的，新报告在第 1 页；停在原页码会看不到刚生成那份
+    page.value = 1
     await loadReports()
     openReport(res.filename)
   } finally {
@@ -163,7 +186,7 @@ onMounted(async () => {
       <template #header>
         <div class="card-head">
           <span class="card-title">历史报告</span>
-          <span class="card-hint">输出目录 reports/platform/</span>
+          <span class="card-hint">共 {{ total }} 份 · 输出目录 reports/platform/</span>
         </div>
       </template>
 
@@ -192,6 +215,13 @@ onMounted(async () => {
           <el-empty description="还没有生成过报告" :image-size="70" />
         </template>
       </el-table>
+
+      <PagePagination
+        :page="page"
+        :page-size="pageSize"
+        :total="total"
+        @change="onPageChange"
+      />
     </el-card>
   </div>
 </template>

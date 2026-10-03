@@ -7,9 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.pagination import PageParams, paginate
 from app.api.projects import get_project_or_404
 from app.database import get_db
 from app.models import TestCase
+from app.schemas.common import Page
 from app.schemas.testcase import TestCaseBrief, TestCaseCreate, TestCaseOut, TestCaseUpdate
 
 router = APIRouter()
@@ -25,11 +27,12 @@ def get_case_or_404(db: Session, case_id: int) -> TestCase:
 
 @router.get(
     "/projects/{project_id}/cases",
-    response_model=list[TestCaseBrief],
-    summary="用例列表（支持按类型/优先级/关键字筛选）",
+    response_model=Page[TestCaseBrief],
+    summary="用例列表（支持按类型/优先级/关键字筛选，分页）",
 )
 def list_cases(
     project_id: int,
+    page: PageParams = Depends(),
     case_type: str | None = Query(None, alias="type", description="api / web"),
     priority: str | None = Query(None, description="P0 / P1 / P2"),
     keyword: str | None = Query(None, description="按名称模糊匹配"),
@@ -43,7 +46,9 @@ def list_cases(
         stmt = stmt.where(TestCase.priority == priority)
     if keyword:
         stmt = stmt.where(TestCase.name.contains(keyword))
-    return db.execute(stmt.order_by(TestCase.id.desc())).scalars().all()
+
+    rows, total = paginate(db, stmt.order_by(TestCase.id.desc()), page)
+    return Page(items=rows, total=total)
 
 
 @router.post(

@@ -36,6 +36,21 @@ class DataDrivenRunResult(BaseModel):
     rows: list["ExecutionOut"]
 
 
+class ExecutionStats(BaseModel):
+    """执行统计，供执行中心的统计卡使用。
+
+    统计的是**筛选后的全部记录**，不受分页影响 ——
+    否则分页之后卡片会变成「翻一页数字就变」。
+
+    failed 是 fail + error 的合计：执行中心那张卡就是这个口径，
+    分成两个数反而要前端再加一次。
+    """
+
+    total: int
+    passed: int
+    failed: int
+
+
 class ExecutionOut(BaseModel):
     """单次执行详情，含完整请求/响应/断言结果。"""
 

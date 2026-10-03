@@ -411,6 +411,27 @@ body {{
 </html>"""
 
 
+def _write_unique(report_dir: Path, stem: str, html: str) -> Path:
+    """把报告写进一个不重名的文件，返回落盘路径。
+
+    文件名只精确到秒，同一秒内连生两份会**静默覆盖**前一份 ——
+    连点两次「生成报告」，磁盘上就只剩后那一份，用户完全看不出来。
+    所以撞名就往后加序号：..._20261003_195103.html / _2.html / _3.html。
+
+    用 'x'（独占创建）而不是先 exists() 再 write_text()：两个请求并发时
+    exists() 会双双回「没有」，然后后写的把先写的盖掉，序号白加了。
+    """
+    for seq in range(1, 1000):
+        name = f"{stem}.html" if seq == 1 else f"{stem}_{seq}.html"
+        try:
+            with open(report_dir / name, "x", encoding="utf-8") as f:
+                f.write(html)
+            return report_dir / name
+        except FileExistsError:
+            continue
+    raise RuntimeError("报告文件名连续撞名过多，请检查报告目录")
+
+
 def build_report(db: Session, execution_ids: list[int], test_type: str = "api") -> dict:
     """按执行记录生成 HTML 报告，写入 settings.report_dir。
 
@@ -460,8 +481,7 @@ def build_report(db: Session, execution_ids: list[int], test_type: str = "api") 
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     tag = f"r{execution_ids[0]}" if len(execution_ids) == 1 else f"r{len(execution_ids)}cases"
-    filename = f"report_{test_type}_{tag}_{timestamp}.html"
-    path = report_dir / filename
-    path.write_text(_build_html(results, stats), encoding="utf-8")
+    path = _write_unique(report_dir, f"report_{test_type}_{tag}_{timestamp}",
+                         _build_html(results, stats))
 
-    return {"filename": filename, "path": str(path), "stats": stats}
+    return {"filename": path.name, "path": str(path), "stats": stats}

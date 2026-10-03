@@ -12,9 +12,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.environments import get_environment_or_404
+from app.api.pagination import PageParams, paginate
 from app.api.projects import get_project_or_404
 from app.database import get_db
 from app.models import Execution, Scenario, ScenarioStep, TestCase
+from app.schemas.common import Page
 from app.schemas.scenario import (
     RunScenarioRequest,
     ScenarioBrief,
@@ -91,13 +93,15 @@ def _replace_steps(db: Session, scenario_id: int, steps: list) -> None:
         ))
 
 
-@router.get("/projects/{project_id}/scenarios", response_model=list[ScenarioBrief],
-            summary="场景列表")
-def list_scenarios(project_id: int, db: Session = Depends(get_db)):
+@router.get("/projects/{project_id}/scenarios", response_model=Page[ScenarioBrief],
+            summary="场景列表（分页）")
+def list_scenarios(project_id: int, page: PageParams = Depends(), db: Session = Depends(get_db)):
     get_project_or_404(db, project_id)
-    scenarios = db.execute(
-        select(Scenario).where(Scenario.project_id == project_id).order_by(Scenario.id.desc())
-    ).scalars().all()
+    scenarios, total = paginate(
+        db,
+        select(Scenario).where(Scenario.project_id == project_id).order_by(Scenario.id.desc()),
+        page,
+    )
 
     counts = dict(
         db.execute(
@@ -107,13 +111,13 @@ def list_scenarios(project_id: int, db: Session = Depends(get_db)):
         ).all()
     ) if scenarios else {}
 
-    return [
+    return Page(items=[
         ScenarioBrief(
             id=s.id, project_id=s.project_id, name=s.name, description=s.description,
             step_count=counts.get(s.id, 0), created_at=s.created_at,
         )
         for s in scenarios
-    ]
+    ], total=total)
 
 
 @router.post("/projects/{project_id}/scenarios", response_model=ScenarioOut,

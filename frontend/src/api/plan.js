@@ -1,8 +1,11 @@
 import request from './request'
 
-/** 计划列表。 */
-export function listPlans(projectId) {
-  return request.get(`/projects/${projectId}/plans`)
+/**
+ * 计划列表，支持 { limit, offset }，返回 `{ items, total }`。
+ * total 是全部条数，不是本页条数。
+ */
+export function listPlans(projectId, params = {}) {
+  return request.get(`/projects/${projectId}/plans`, { params })
 }
 
 /** 在项目下新建计划。 */

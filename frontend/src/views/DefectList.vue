@@ -1,10 +1,11 @@
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
+import PagePagination from '@/components/PagePagination.vue'
 import DefectEditorDrawer from '@/components/DefectEditorDrawer.vue'
 import { listProjects } from '@/api/project'
 import {
@@ -21,6 +22,11 @@ const projects = ref([])
 const currentProjectId = ref(null)
 const defects = ref([])
 const loading = ref(false)
+
+// 分页状态。total 是「筛选后的全部条数」，由后端返回，不是 defects.length
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 const filters = reactive({ status: '', severity: '', keyword: '' })
 
@@ -61,25 +67,48 @@ async function loadProjects() {
 async function loadDefects() {
   if (currentProjectId.value == null) {
     defects.value = []
+    total.value = 0
     return
   }
   loading.value = true
   try {
-    const params = {}
+    const params = {
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
+    }
     if (filters.status) params.status = filters.status
     if (filters.severity) params.severity = filters.severity
     if (filters.keyword.trim()) params.keyword = filters.keyword.trim()
-    defects.value = await listDefects(currentProjectId.value, params)
+    const data = await listDefects(currentProjectId.value, params)
+    defects.value = data.items
+    total.value = data.total
   } finally {
     loading.value = false
   }
+}
+
+/** 筛选条件或项目变了就回到第 1 页，再查。
+ *
+ * 不重置页码的话，可能停在一个新条件下根本不存在的页上（比如原来在第 5 页、
+ * 筛选后只剩 3 条），用户看到的是一张空表，会以为没数据。
+ */
+function search() {
+  page.value = 1
+  return loadDefects()
+}
+
+/** 分页条回调：页码和每页条数由组件一次给全，避免两者先后生效导致多查一次。 */
+function onPageChange(payload) {
+  page.value = payload.page
+  pageSize.value = payload.pageSize
+  return loadDefects()
 }
 
 function resetFilters() {
   filters.status = ''
   filters.severity = ''
   filters.keyword = ''
-  loadDefects()
+  search()
 }
 
 function openCreate() {
@@ -103,6 +132,8 @@ async function remove(row) {
   })
   await deleteDefect(row.id)
   ElMessage.success('已删除')
+  // 删掉的是本页最后一条时往前退一页，否则会停在一张空表上
+  if (defects.value.length === 1 && page.value > 1) page.value -= 1
   await loadDefects()
 }
 
@@ -119,8 +150,10 @@ function openFromQuery() {
   router.replace({ query })
 }
 
-watch(currentProjectId, loadDefects)
-
+// 换项目不走 watch，走 el-select 的 @change（见模板）。
+// watch 会在 loadProjects() 给 select 赋初值时也触发一次，加上 onMounted 里
+// 那句显式查询，开局就查了两遍 —— 请求面板里能看到两条一模一样的。
+// @change 只有用户真的选了才发，程序赋值不发。报告页本来就是这么写的。
 onMounted(async () => {
   await loadProjects()
   await loadDefects()
@@ -139,6 +172,7 @@ onMounted(async () => {
         placeholder="选择项目"
         style="width: 190px"
         :no-data-text="'还没有项目，请先到「项目管理」创建'"
+        @change="search"
       >
         <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
       </el-select>
@@ -160,16 +194,16 @@ onMounted(async () => {
           placeholder="按标题搜索"
           clearable
           style="width: 220px"
-          @keyup.enter="loadDefects"
+          @keyup.enter="search"
         />
-        <el-button type="primary" :icon="Search" @click="loadDefects">查询</el-button>
+        <el-button type="primary" :icon="Search" @click="search">查询</el-button>
         <el-button @click="resetFilters">重置</el-button>
       </div>
     </el-card>
 
     <el-card shadow="never">
       <div class="card-tools">
-        <span>共 {{ defects.length }} 条缺陷</span>
+        <span>共 {{ total }} 条缺陷</span>
         <el-button link :icon="Refresh" @click="loadDefects">刷新</el-button>
       </div>
 
@@ -215,6 +249,13 @@ onMounted(async () => {
           <el-empty description="还没有缺陷。执行失败后可在「执行中心」的详情里一键提缺陷" />
         </template>
       </el-table>
+
+      <PagePagination
+        :page="page"
+        :page-size="pageSize"
+        :total="total"
+        @change="onPageChange"
+      />
     </el-card>
 
     <DefectEditorDrawer

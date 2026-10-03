@@ -1,8 +1,11 @@
 import request from './request'
 
-/** 场景列表。 */
-export function listScenarios(projectId) {
-  return request.get(`/projects/${projectId}/scenarios`)
+/**
+ * 场景列表，支持 { limit, offset }，返回 `{ items, total }`。
+ * total 是全部条数，不是本页条数。
+ */
+export function listScenarios(projectId, params = {}) {
+  return request.get(`/projects/${projectId}/scenarios`, { params })
 }
 
 /** 在项目下新建场景。 */

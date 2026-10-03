@@ -19,7 +19,17 @@ const visible = computed({
 })
 
 const isEdit = computed(() => props.scenarioId != null)
+
+/**
+ * 下拉一次取多少条用例。
+ *
+ * 用例列表接口现在分页了（默认 20 条），下拉只取一页的话后面那些用例根本选不到。
+ * 直接顶到后端上限（MAX_PAGE_SIZE = 200），取不全时下面会提示。
+ */
+const PICKER_LIMIT = 200
+
 const cases = ref([])
+const caseTotal = ref(0)
 const loading = ref(false)
 const submitting = ref(false)
 
@@ -41,7 +51,9 @@ async function loadCases() {
   }
   // 只列接口用例：场景串联执行的是 api_executor，Web 用例放进来跑不通。
   // 之前混着列出来，选中之后执行必然失败。
-  cases.value = await listCases(props.projectId, { type: 'api' })
+  const data = await listCases(props.projectId, { type: 'api', limit: PICKER_LIMIT })
+  cases.value = data.items
+  caseTotal.value = data.total
 }
 
 async function load() {
@@ -160,6 +172,9 @@ watch(visible, (open) => {
           </div>
 
           <el-button link type="primary" @click="addStep">+ 添加步骤</el-button>
+          <p v-if="caseTotal > cases.length" class="truncated">
+            该项目共 {{ caseTotal }} 条接口用例，下拉里只列出前 {{ cases.length }} 条。
+          </p>
           <p class="hint">
             按顺序执行；某一步提取到的变量（用例的「提取变量」Tab）可以在后续步骤里用
             <code>${变量名}</code> 引用。
@@ -213,6 +228,14 @@ watch(visible, (open) => {
   margin: 8px 0 0;
   font-size: 12px;
   color: var(--text-3);
+  line-height: 1.6;
+}
+
+/* 用例被截断时才出现 —— 用告警色，别让它混在下面那行灰字提示里 */
+.truncated {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--signal-warn);
   line-height: 1.6;
 }
 </style>

@@ -15,9 +15,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.pagination import PageParams, paginate
 from app.api.projects import get_project_or_404
 from app.database import get_db
 from app.models import Defect, Execution, Project, TestCase
+from app.schemas.common import Page
 from app.schemas.defect import (
     DefectBrief,
     DefectCreate,
@@ -101,10 +103,11 @@ def _describe_execution(execution: Execution, case_name: str) -> str:
     return "\n".join(lines)
 
 
-@router.get("/projects/{project_id}/defects", response_model=list[DefectBrief],
-            summary="缺陷列表")
+@router.get("/projects/{project_id}/defects", response_model=Page[DefectBrief],
+            summary="缺陷列表（分页）")
 def list_defects(
     project_id: int,
+    page: PageParams = Depends(),
     status_filter: str | None = Query(None, alias="status", description="按状态筛选"),
     severity: str | None = Query(None, description="按严重程度筛选"),
     keyword: str | None = Query(None, description="按标题关键字筛选"),
@@ -120,10 +123,10 @@ def list_defects(
     if keyword and keyword.strip():
         stmt = stmt.where(Defect.title.like(f"%{keyword.strip()}%"))
 
-    defects = db.execute(stmt.order_by(Defect.id.desc())).scalars().all()
+    defects, total = paginate(db, stmt.order_by(Defect.id.desc()), page)
     names = _case_names(db, {d.case_id for d in defects if d.case_id})
 
-    return [
+    return Page(items=[
         DefectBrief(
             id=d.id,
             title=d.title,
@@ -137,7 +140,7 @@ def list_defects(
             updated_at=d.updated_at,
         )
         for d in defects
-    ]
+    ], total=total)
 
 
 @router.post("/projects/{project_id}/defects", response_model=DefectOut,

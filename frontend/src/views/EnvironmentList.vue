@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 
@@ -111,8 +111,10 @@ async function remove(row) {
   await loadEnvironments()
 }
 
-watch(currentProjectId, loadEnvironments)
-
+// 换项目不走 watch，走 el-select 的 @change（见模板）。
+// watch 会在 loadProjects() 给 select 赋初值时也触发一次，加上 onMounted 里
+// 那句显式查询，开局就查了两遍 —— 请求面板里能看到两条一模一样的。
+// @change 只有用户真的选了才发，程序赋值不发。
 onMounted(async () => {
   await loadProjects()
   await loadEnvironments()
@@ -127,6 +129,7 @@ onMounted(async () => {
         placeholder="选择项目"
         style="width: 200px"
         :no-data-text="'还没有项目，请先到「项目管理」创建'"
+        @change="loadEnvironments"
       >
         <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
       </el-select>

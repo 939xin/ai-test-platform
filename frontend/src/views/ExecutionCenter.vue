@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   CircleCheck,
@@ -11,10 +11,11 @@ import {
 } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
+import PagePagination from '@/components/PagePagination.vue'
 import ExecutionResult from '@/components/ExecutionResult.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { listProjects } from '@/api/project'
-import { getExecution, listExecutions } from '@/api/execution'
+import { getExecution, getExecutionStats, listExecutions } from '@/api/execution'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,6 +24,11 @@ const projects = ref([])
 const currentProjectId = ref(null)
 const executions = ref([])
 const loading = ref(false)
+
+// 分页状态。total 是「筛选后的全部条数」，由后端返回，不是 executions.length
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 const filters = reactive({ status: '' })
 
@@ -37,17 +43,22 @@ const STATUS_OPTIONS = [
   { label: '运行中', value: 'running' },
 ]
 
-// 统计只针对当前加载的这一页记录 —— limit 内有多少条就是多少条
-const stats = computed(() => {
-  const pass = executions.value.filter((e) => e.status === 'pass').length
-  const fail = executions.value.filter((e) => e.status === 'fail' || e.status === 'error').length
-  return { total: executions.value.length, pass, fail }
-})
+/**
+ * 统计卡的数据，走专门的统计接口 —— 统计的是整个项目，与分页无关。
+ *
+ * 原来是对当前加载的那一页 reduce 出来的，分页之后会变成「翻一页数字就变」，
+ * 所以口径必须落在后端。
+ *
+ * 不把状态筛选传给它：四张卡在筛选条**上方**，语义是项目总览；而且按状态筛完
+ * 之后「通过率」只可能是 0% 或 100%，那张卡就没意义了。
+ * 若要让卡片跟着状态筛选走，把 filters.status 一起传过去即可。
+ */
+const stats = ref({ total: 0, passed: 0, failed: 0 })
 
 // 通过率为空时显示「—」，别显示 0% —— 一条记录都没有时 0% 是误导
 const passRate = computed(() => {
   if (!stats.value.total) return '—'
-  return `${((stats.value.pass / stats.value.total) * 100).toFixed(1)}%`
+  return `${((stats.value.passed / stats.value.total) * 100).toFixed(1)}%`
 })
 
 function formatTime(value) {
@@ -64,16 +75,53 @@ async function loadProjects() {
 async function loadExecutions() {
   if (currentProjectId.value == null) {
     executions.value = []
+    total.value = 0
     return
   }
   loading.value = true
   try {
-    const params = { limit: 100 }
+    const params = {
+      project_id: currentProjectId.value,
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
+    }
     if (filters.status) params.status = filters.status
-    executions.value = await listExecutions({ project_id: currentProjectId.value, ...params })
+    const data = await listExecutions(params)
+    executions.value = data.items
+    total.value = data.total
   } finally {
     loading.value = false
   }
+}
+
+async function loadStats() {
+  if (currentProjectId.value == null) {
+    stats.value = { total: 0, passed: 0, failed: 0 }
+    return
+  }
+  stats.value = await getExecutionStats({ project_id: currentProjectId.value })
+}
+
+/** 列表和统计卡一起刷 —— 只刷一个会出现「卡片和表格对不上」。 */
+async function refresh() {
+  await Promise.all([loadExecutions(), loadStats()])
+}
+
+/** 状态筛选变了就回到第 1 页，再查。
+ *
+ * 不重置页码的话，可能停在一个新条件下根本不存在的页上，
+ * 用户看到的是一张空表，会以为没数据。
+ */
+function search() {
+  page.value = 1
+  return refresh()
+}
+
+/** 分页条回调：页码和每页条数由组件一次给全，避免两者先后生效导致多查一次。 */
+function onPageChange(payload) {
+  page.value = payload.page
+  pageSize.value = payload.pageSize
+  return loadExecutions()
 }
 
 async function openDetailById(executionId) {
@@ -112,11 +160,18 @@ function gotoDefect(defectId) {
   })
 }
 
-watch(currentProjectId, loadExecutions)
+function resetFilters() {
+  filters.status = ''
+  return search()
+}
 
+// 换项目不走 watch，走 el-select 的 @change（见模板）。
+// watch 会在 loadProjects() 给 select 赋初值时也触发一次，加上 onMounted 里
+// 那句显式查询，开局就查了两遍 —— 请求面板里能看到两条一模一样的。
+// @change 只有用户真的选了才发，程序赋值不发。
 onMounted(async () => {
   await loadProjects()
-  await loadExecutions()
+  await refresh()
   openFromQuery()
 })
 </script>
@@ -129,10 +184,11 @@ onMounted(async () => {
         placeholder="选择项目"
         style="width: 190px"
         :no-data-text="'还没有项目，请先到「项目管理」创建'"
+        @change="search"
       >
         <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
       </el-select>
-      <el-button :icon="Refresh" @click="loadExecutions">刷新</el-button>
+      <el-button :icon="Refresh" @click="refresh">刷新</el-button>
     </PageHeader>
 
     <div class="stat-row">
@@ -147,14 +203,14 @@ onMounted(async () => {
         <span class="stat-icon is-pass"><el-icon :size="18"><CircleCheck /></el-icon></span>
         <div class="stat-text">
           <div class="stat-label">通过</div>
-          <div class="mono stat-value">{{ stats.pass }}</div>
+          <div class="mono stat-value">{{ stats.passed }}</div>
         </div>
       </el-card>
       <el-card class="stat-card" shadow="never">
         <span class="stat-icon is-fail"><el-icon :size="18"><WarningFilled /></el-icon></span>
         <div class="stat-text">
           <div class="stat-label">失败 / 错误</div>
-          <div class="mono stat-value">{{ stats.fail }}</div>
+          <div class="mono stat-value">{{ stats.failed }}</div>
         </div>
       </el-card>
       <el-card class="stat-card" shadow="never">
@@ -171,24 +227,15 @@ onMounted(async () => {
         <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 150px">
           <el-option v-for="s in STATUS_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
         </el-select>
-        <el-button type="primary" :icon="Search" @click="loadExecutions">查询</el-button>
-        <el-button
-          @click="
-            () => {
-              filters.status = ''
-              loadExecutions()
-            }
-          "
-        >
-          重置
-        </el-button>
+        <el-button type="primary" :icon="Search" @click="search">查询</el-button>
+        <el-button @click="resetFilters">重置</el-button>
       </div>
     </el-card>
 
     <el-card shadow="never">
       <div class="card-tools">
-        <span>共 {{ executions.length }} 条记录</span>
-        <el-button link :icon="Refresh" @click="loadExecutions">刷新</el-button>
+        <span>共 {{ total }} 条记录</span>
+        <el-button link :icon="Refresh" @click="refresh">刷新</el-button>
       </div>
 
       <el-table v-loading="loading" :data="executions">
@@ -223,6 +270,13 @@ onMounted(async () => {
           <el-empty description="还没有执行记录，到「用例管理」点执行后会出现在这里" />
         </template>
       </el-table>
+
+      <PagePagination
+        :page="page"
+        :page-size="pageSize"
+        :total="total"
+        @change="onPageChange"
+      />
     </el-card>
 
     <el-drawer

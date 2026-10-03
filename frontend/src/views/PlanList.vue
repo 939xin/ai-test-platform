@@ -1,9 +1,10 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
+import PagePagination from '@/components/PagePagination.vue'
 import PlanEditorDrawer from '@/components/PlanEditorDrawer.vue'
 import RunPlanDialog from '@/components/RunPlanDialog.vue'
 import { listProjects } from '@/api/project'
@@ -13,6 +14,11 @@ const projects = ref([])
 const currentProjectId = ref(null)
 const plans = ref([])
 const loading = ref(false)
+
+// 分页状态。total 是全部条数，由后端返回，不是 plans.length
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 const drawerVisible = ref(false)
 const editingId = ref(null)
@@ -34,14 +40,33 @@ async function loadProjects() {
 async function loadPlans() {
   if (currentProjectId.value == null) {
     plans.value = []
+    total.value = 0
     return
   }
   loading.value = true
   try {
-    plans.value = await listPlans(currentProjectId.value)
+    const data = await listPlans(currentProjectId.value, {
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
+    })
+    plans.value = data.items
+    total.value = data.total
   } finally {
     loading.value = false
   }
+}
+
+/** 换项目就回到第 1 页 —— 否则可能停在新项目根本没有的页码上，看到一张空表。 */
+function search() {
+  page.value = 1
+  return loadPlans()
+}
+
+/** 分页条回调：页码和每页条数由组件一次给全，避免两者先后生效导致多查一次。 */
+function onPageChange(payload) {
+  page.value = payload.page
+  pageSize.value = payload.pageSize
+  return loadPlans()
 }
 
 function openCreate() {
@@ -65,11 +90,15 @@ async function remove(row) {
   })
   await deletePlan(row.id)
   ElMessage.success('已删除')
+  // 删掉的是本页最后一条时往前退一页，否则会停在一张空表上
+  if (plans.value.length === 1 && page.value > 1) page.value -= 1
   await loadPlans()
 }
 
-watch(currentProjectId, loadPlans)
-
+// 换项目不走 watch，走 el-select 的 @change（见模板）。
+// watch 会在 loadProjects() 给 select 赋初值时也触发一次，加上 onMounted 里
+// 那句显式查询，开局就查了两遍 —— 请求面板里能看到两条一模一样的。
+// @change 只有用户真的选了才发，程序赋值不发。
 onMounted(async () => {
   await loadProjects()
   await loadPlans()
@@ -84,6 +113,7 @@ onMounted(async () => {
         placeholder="选择项目"
         style="width: 190px"
         :no-data-text="'还没有项目，请先到「项目管理」创建'"
+        @change="search"
       >
         <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
       </el-select>
@@ -94,7 +124,7 @@ onMounted(async () => {
 
     <el-card shadow="never">
       <div class="card-tools">
-        <span>共 {{ plans.length }} 个计划</span>
+        <span>共 {{ total }} 个计划</span>
         <el-button link :icon="Refresh" @click="loadPlans">刷新</el-button>
       </div>
 
@@ -133,6 +163,13 @@ onMounted(async () => {
           <el-empty description="还没有测试计划，点击右上角「新建计划」挑几条用例批量跑" />
         </template>
       </el-table>
+
+      <PagePagination
+        :page="page"
+        :page-size="pageSize"
+        :total="total"
+        @change="onPageChange"
+      />
     </el-card>
 
     <PlanEditorDrawer

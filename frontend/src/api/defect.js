@@ -8,7 +8,10 @@ export const SEVERITY_OPTIONS = ['致命', '严重', '一般', '轻微']
 export const PRIORITY_OPTIONS = ['P0', 'P1', 'P2', 'P3']
 export const DEFECT_STATUS_OPTIONS = ['新建', '处理中', '已修复', '已关闭', '重新打开']
 
-/** 缺陷列表，params 支持 { status, severity, keyword }。 */
+/**
+ * 缺陷列表（分页）。params 支持 { status, severity, keyword, limit, offset }，
+ * 返回 `{ items, total }` —— total 是筛选后的全部条数，不是本页条数。
+ */
 export function listDefects(projectId, params = {}) {
   return request.get(`/projects/${projectId}/defects`, { params })
 }

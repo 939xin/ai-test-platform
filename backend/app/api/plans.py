@@ -16,10 +16,12 @@ from sqlalchemy.orm import Session
 
 from app.api.environments import get_environment_or_404
 from app.api.executions import case_to_dict, env_to_dict, execution_out
+from app.api.pagination import PageParams, paginate
 from app.api.projects import get_project_or_404
 from app.config import settings
 from app.database import get_db
 from app.models import Environment, Execution, TestCase, TestPlan, TestPlanCase
+from app.schemas.common import Page
 from app.schemas.execution import ExecutionOut
 from app.schemas.plan import (
     PlanBrief,
@@ -110,13 +112,15 @@ def _replace_cases(db: Session, plan_id: int, cases: list) -> None:
         ))
 
 
-@router.get("/projects/{project_id}/plans", response_model=list[PlanBrief],
-            summary="计划列表")
-def list_plans(project_id: int, db: Session = Depends(get_db)):
+@router.get("/projects/{project_id}/plans", response_model=Page[PlanBrief],
+            summary="计划列表（分页）")
+def list_plans(project_id: int, page: PageParams = Depends(), db: Session = Depends(get_db)):
     get_project_or_404(db, project_id)
-    plans = db.execute(
-        select(TestPlan).where(TestPlan.project_id == project_id).order_by(TestPlan.id.desc())
-    ).scalars().all()
+    plans, total = paginate(
+        db,
+        select(TestPlan).where(TestPlan.project_id == project_id).order_by(TestPlan.id.desc()),
+        page,
+    )
 
     counts = dict(
         db.execute(
@@ -127,14 +131,14 @@ def list_plans(project_id: int, db: Session = Depends(get_db)):
     ) if plans else {}
     env_names = _env_names(db, {p.env_id for p in plans if p.env_id})
 
-    return [
+    return Page(items=[
         PlanBrief(
             id=p.id, project_id=p.project_id, name=p.name, description=p.description,
             env_id=p.env_id, env_name=env_names.get(p.env_id),
             case_count=counts.get(p.id, 0), created_at=p.created_at,
         )
         for p in plans
-    ]
+    ], total=total)
 
 
 @router.post("/projects/{project_id}/plans", response_model=PlanOut,

@@ -6,12 +6,13 @@
  * 表格列也各按类型定制 —— 不再混排后用 v-if 挑列显示。
  * 新建/编辑跳转到全屏编辑页，项目 id 走 query 带过去，刷新页面也不丢。
  */
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
+import PagePagination from '@/components/PagePagination.vue'
 import RunCaseDialog from '@/components/RunCaseDialog.vue'
 import { listProjects } from '@/api/project'
 import { deleteCase, listCases } from '@/api/case'
@@ -23,6 +24,11 @@ const projects = ref([])
 const currentProjectId = ref(null)
 const cases = ref([])
 const loading = ref(false)
+
+// 分页状态。total 是「筛选后的全部条数」，由后端返回，不是 cases.length
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 const filters = reactive({ priority: '', keyword: '' })
 
@@ -70,23 +76,47 @@ async function loadProjects() {
 async function loadCases() {
   if (currentProjectId.value == null) {
     cases.value = []
+    total.value = 0
     return
   }
   loading.value = true
   try {
-    const params = { type: 'api' }
+    const params = {
+      type: 'api',
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
+    }
     if (filters.priority) params.priority = filters.priority
     if (filters.keyword) params.keyword = filters.keyword
-    cases.value = await listCases(currentProjectId.value, params)
+    const data = await listCases(currentProjectId.value, params)
+    cases.value = data.items
+    total.value = data.total
   } finally {
     loading.value = false
   }
 }
 
+/** 筛选条件或项目变了就回到第 1 页，再查。
+ *
+ * 不重置页码的话，可能停在一个新条件下根本不存在的页上（比如原来在第 5 页、
+ * 筛选后只剩 3 条），用户看到的是一张空表，会以为没数据。
+ */
+function search() {
+  page.value = 1
+  return loadCases()
+}
+
+/** 分页条回调：页码和每页条数由组件一次给全，避免两者先后生效导致多查一次。 */
+function onPageChange(payload) {
+  page.value = payload.page
+  pageSize.value = payload.pageSize
+  return loadCases()
+}
+
 function resetFilters() {
   filters.priority = ''
   filters.keyword = ''
-  loadCases()
+  search()
 }
 
 function openCreate() {
@@ -112,13 +142,21 @@ async function remove(row) {
   })
   await deleteCase(row.id)
   ElMessage.success('已删除')
+  // 删掉的是本页最后一条时往前退一页，否则会停在一张空表上
+  if (cases.value.length === 1 && page.value > 1) page.value -= 1
   await loadCases()
 }
 
-watch(currentProjectId, (id) => {
+/** 换项目：把项目 id 同步到 URL（从编辑页返回时能回到同一个项目），再回第 1 页查。
+ *
+ * 不走 watch(currentProjectId)：loadProjects() 给 select 赋初值时也会触发 watch，
+ * 加上 onMounted 里那句显式查询，开局就查了两遍（请求面板里两条一模一样）。
+ * el-select 的 @change 只有用户真的选了才发，程序赋值不发。
+ */
+function onProjectChange(id) {
   syncProjectToQuery(id)
-  loadCases()
-})
+  search()
+}
 
 onMounted(async () => {
   await loadProjects()
@@ -134,6 +172,7 @@ onMounted(async () => {
         placeholder="选择项目"
         style="width: 190px"
         :no-data-text="'还没有项目，请先到「项目管理」创建'"
+        @change="onProjectChange"
       >
         <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
       </el-select>
@@ -152,16 +191,16 @@ onMounted(async () => {
           placeholder="按名称搜索"
           clearable
           style="width: 220px"
-          @keyup.enter="loadCases"
+          @keyup.enter="search"
         />
-        <el-button type="primary" :icon="Search" @click="loadCases">查询</el-button>
+        <el-button type="primary" :icon="Search" @click="search">查询</el-button>
         <el-button @click="resetFilters">重置</el-button>
       </div>
     </el-card>
 
     <el-card shadow="never">
       <div class="card-tools">
-        <span>共 {{ cases.length }} 条接口用例</span>
+        <span>共 {{ total }} 条接口用例</span>
         <el-button link :icon="Refresh" @click="loadCases">刷新</el-button>
       </div>
 
@@ -213,6 +252,13 @@ onMounted(async () => {
           <el-empty description="还没有接口用例，点击右上角「新建接口用例」开始" />
         </template>
       </el-table>
+
+      <PagePagination
+        :page="page"
+        :page-size="pageSize"
+        :total="total"
+        @change="onPageChange"
+      />
     </el-card>
 
     <RunCaseDialog

@@ -12,10 +12,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.pagination import PageParams
 from app.api.projects import get_project_or_404
 from app.config import settings
 from app.database import get_db
 from app.models import Execution
+from app.schemas.common import Page
 from app.services.report_generator import build_report
 
 router = APIRouter()
@@ -34,6 +36,17 @@ class ReportCreate(BaseModel):
     # 不传就按执行记录自动判断（前端列表接口拿不到用例类型，见 _infer_test_type）
     test_type: str | None = Field(None, pattern="^(api|web)$",
                                   description="不传则按执行记录自动判断")
+
+
+class ReportInfo(BaseModel):
+    """报告列表里的一项。
+
+    数据来自磁盘上的 HTML 文件而不是数据库，所以没有 id —— filename 就是它的标识。
+    """
+
+    filename: str
+    size: int
+    created_at: str
 
 
 def _report_dir() -> Path:
@@ -80,8 +93,8 @@ def create_report(project_id: int, payload: ReportCreate, db: Session = Depends(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
-@router.get("/reports", summary="已生成的报告列表")
-def list_reports():
+@router.get("/reports", response_model=Page[ReportInfo], summary="已生成的报告列表（分页）")
+def list_reports(page: PageParams = Depends()):
     files = []
     for path in _report_dir().glob("*.html"):
         stat = path.stat()
@@ -92,7 +105,10 @@ def list_reports():
         })
     # 新的排前面
     files.sort(key=lambda f: f["created_at"], reverse=True)
-    return files
+
+    # 数据来自磁盘、一次就全读出来了，分页在这里只是内存切片 —— 不用 paginate()
+    # （那个是给数据库查询用的，要单独 count 一次）
+    return Page(items=files[page.offset:page.offset + page.limit], total=len(files))
 
 
 @public_router.get("/reports/{filename}", response_class=HTMLResponse, summary="查看报告内容")

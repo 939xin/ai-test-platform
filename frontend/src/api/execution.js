@@ -20,9 +20,23 @@ export function runWebCase(caseId, data = {}) {
   return request.post(`/cases/${caseId}/run-web`, data, { timeout: 1900000 })
 }
 
-/** 执行历史，支持 { project_id, case_id, limit }。 */
+/**
+ * 执行历史，支持 { project_id, case_id, status, limit, offset }。
+ * 返回 `{ items, total }` —— total 是筛选后的全部条数，不是本页条数。
+ */
 export function listExecutions(params = {}) {
   return request.get('/executions', { params })
+}
+
+/**
+ * 执行统计，支持 { project_id, case_id, status }，返回 { total, passed, failed }。
+ *
+ * 统计的是**全部**记录，与分页无关。执行中心的统计卡必须走这里，
+ * 不能拿列表当前页去 reduce —— 分页之后那样会变成「翻一页数字就变」。
+ * failed 是 fail + error 的合计，与那张卡的口径一致。
+ */
+export function getExecutionStats(params = {}) {
+  return request.get('/executions/stats', { params })
 }
 
 /** 执行详情。 */
