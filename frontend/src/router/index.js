@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import AppLayout from '@/components/AppLayout.vue'
+import { getToken } from '@/api/session'
 
 // 用例按类型拆成两条独立线路：接口测试 / UI 测试，各有自己的列表与全屏编辑页。
 // 编辑页复用同一个组件（views/CaseEditor.vue），由 meta.caseType 决定渲染哪半部分 ——
@@ -10,6 +11,13 @@ import AppLayout from '@/components/AppLayout.vue'
 // 用 `import(type === 'api' ? 'A' : 'B')` 这种计算路径会在运行时报
 // "Failed to resolve module specifier"。
 const routes = [
+  // 登录页在 AppLayout 之外 —— 没登录的人不该看到侧栏菜单
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('@/views/LoginView.vue'),
+    meta: { title: '登录', public: true },
+  },
   {
     path: '/',
     component: AppLayout,
@@ -38,7 +46,29 @@ const routes = [
   },
 ]
 
-export default createRouter({
+const router = createRouter({
   history: createWebHistory(),
   routes,
 })
+
+/**
+ * 登录守卫，两个方向都要管：
+ * - 没 token 进受保护页面 → 踢回登录页，并把原地址记在 redirect 里，登录后回原位
+ * - 已有 token 还去登录页 → 直接送进项目页，免得登录后点后退又回到登录页
+ *
+ * 这里只看「有没有 token」，不判它过没过期 —— token 过期由后端 401 触发，
+ * request.js 会清掉登录态并跳回来，前端不重复解析 JWT。
+ */
+router.beforeEach((to) => {
+  const authed = Boolean(getToken())
+
+  if (!authed && !to.meta.public) {
+    return { name: 'login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath } }
+  }
+  if (authed && to.name === 'login') {
+    return { path: '/projects' }
+  }
+  return true
+})
+
+export default router

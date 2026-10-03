@@ -20,6 +20,12 @@ from app.services.report_generator import build_report
 
 router = APIRouter()
 
+# 免鉴权路由：报告 HTML 与里面的截图是浏览器直接导航打开的
+# （列表页 window.open、报告 HTML 里的 <img src>），这两条路走的是浏览器地址栏，
+# 没法带 Authorization 头，挂上校验只会把报告页打死。两条路由各自都有
+# ../ 越界防护（_safe_report_path / _safe_screenshot_path），不依赖鉴权兜底。
+public_router = APIRouter()
+
 
 class ReportCreate(BaseModel):
     """生成报告的入参。execution_ids 就是报告要包含的执行记录。"""
@@ -89,7 +95,7 @@ def list_reports():
     return files
 
 
-@router.get("/reports/{filename}", response_class=HTMLResponse, summary="查看报告内容")
+@public_router.get("/reports/{filename}", response_class=HTMLResponse, summary="查看报告内容")
 def get_report(filename: str):
     return _safe_report_path(filename).read_text(encoding="utf-8")
 
@@ -118,8 +124,8 @@ def _safe_screenshot_path(asset_path: str) -> Path:
     return path
 
 
-@router.get("/reports/screenshots/{asset_path:path}", response_class=FileResponse,
-            summary="查看 Web 用例的步骤截图")
+@public_router.get("/reports/screenshots/{asset_path:path}", response_class=FileResponse,
+                   summary="查看 Web 用例的步骤截图")
 def get_screenshot(asset_path: str):
     """截图存在 report_dir/screenshots/ 下，报告 HTML 里用相对路径引用，
     所以经接口打开报告时，浏览器正好会请求到这个路由。

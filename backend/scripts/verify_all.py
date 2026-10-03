@@ -19,6 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import requests  # noqa: E402
 
 BASE = "http://127.0.0.1:8000/api"
+# 全站接口已统一校验 JWT，除登录本身外都得带 token。
+# 用 Session 挂一次 Authorization 头，比在 100 多处逐个传 headers 可靠得多
+# （漏一处就是 401，而且报错信息还会掩盖成「业务失败」）。
+# 登录那两次刻意留用裸 requests，别把上一次的 token 带进登录请求。
+SESSION = requests.Session()
 # Web 验收的靶页：后端静态托管的离线演示页（httpbin 没有 UI，测不了 Web）
 DEMO_URL = f"{BASE}/demo/index.html"
 SECOND_URL = f"{BASE}/demo/second.html"
@@ -132,7 +137,7 @@ def main() -> int:
     # ==================== Day 1 ====================
     section("Day 1 · 健康检查与认证")
     try:
-        r = requests.get(f"{BASE}/health", timeout=10)
+        r = SESSION.get(f"{BASE}/health", timeout=10)
         data = r.json()
         check("健康检查", r.status_code == 200 and data.get("status") == "ok",
               f"database={data.get('database')}")
@@ -143,10 +148,26 @@ def main() -> int:
     r = requests.post(f"{BASE}/auth/login",
                       json={"username": "admin", "password": "admin123"}, timeout=10)
     check("登录成功返回 token", r.status_code == 200 and "access_token" in r.json())
+    token = r.json().get("access_token", "")
 
     r = requests.post(f"{BASE}/auth/login",
                       json={"username": "admin", "password": "wrong"}, timeout=10)
     check("错误密码返回 401", r.status_code == 401)
+
+    section("Day 1 · 全站 JWT 校验边界")
+    # 其余 100 多项都靠 SESSION 的 token 通过，所以这里必须证明「不带 token 真会被拦」，
+    # 否则万一守卫没挂上，整份验收会因为误放行而全绿。
+    SESSION.headers["Authorization"] = f"Bearer {token}"
+    no_auth = requests.get(f"{BASE}/projects", timeout=10)
+    check("无 token 访问业务接口返回 401", no_auth.status_code == 401,
+          f"status={no_auth.status_code}")
+    forged = requests.get(f"{BASE}/projects", timeout=10,
+                          headers={"Authorization": "Bearer not.a.real.token"})
+    check("伪造 token 返回 401", forged.status_code == 401, f"status={forged.status_code}")
+    # 两处豁免：健康检查（start.bat 与登录前探活用）和登录本身
+    check("健康检查不需要 token", requests.get(f"{BASE}/health", timeout=10).status_code == 200)
+    check("带 token 访问业务接口正常",
+          SESSION.get(f"{BASE}/projects", timeout=10).status_code == 200)
 
     section("Day 1 · 复用引擎（离线，不依赖后端）")
     from app.services.api_executor import execute_case
@@ -178,35 +199,35 @@ def main() -> int:
 
     # ==================== Day 2 ====================
     section("Day 2 · 项目管理")
-    r = requests.post(f"{BASE}/projects",
+    r = SESSION.post(f"{BASE}/projects",
                       json={"name": "验收项目", "description": "verify_all 创建"}, timeout=10)
     check("新建项目", r.status_code == 201)
     pid = r.json().get("id") if r.status_code == 201 else None
 
-    r = requests.get(f"{BASE}/projects/{pid}", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}", timeout=10)
     check("项目详情（中文往返）", r.status_code == 200 and r.json().get("name") == "验收项目")
 
-    r = requests.put(f"{BASE}/projects/{pid}", json={"description": "已更新"}, timeout=10)
+    r = SESSION.put(f"{BASE}/projects/{pid}", json={"description": "已更新"}, timeout=10)
     check("更新项目", r.status_code == 200 and r.json().get("description") == "已更新")
 
-    r = requests.post(f"{BASE}/projects", json={"name": ""}, timeout=10)
+    r = SESSION.post(f"{BASE}/projects", json={"name": ""}, timeout=10)
     check("空名称返回 422", r.status_code == 422)
 
     section("Day 2 · 环境管理")
-    r = requests.post(f"{BASE}/projects/{pid}/environments",
+    r = SESSION.post(f"{BASE}/projects/{pid}/environments",
                       json={"name": "dev", "base_url": "https://httpbin.org",
                             "variables_json": {"token": "abc"}}, timeout=10)
     check("新建环境", r.status_code == 201)
     env_id = r.json().get("id") if r.status_code == 201 else None
 
-    r = requests.get(f"{BASE}/projects/{pid}/environments", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/environments", timeout=10)
     check("环境列表", r.status_code == 200 and len(r.json()) == 1)
 
-    r = requests.get(f"{BASE}/environments/{env_id}", timeout=10)
+    r = SESSION.get(f"{BASE}/environments/{env_id}", timeout=10)
     check("环境变量保存正确", r.status_code == 200 and r.json()["variables_json"].get("token") == "abc")
 
     section("Day 2 · 用例管理")
-    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
         # 刻意不传 project_id，模拟前端的真实调用
         "name": "GET /get 验收用例",
         "type": "api",
@@ -229,11 +250,11 @@ def main() -> int:
     check("新建用例", r.status_code == 201)
     case_id = r.json().get("id") if r.status_code == 201 else None
 
-    r = requests.get(f"{BASE}/cases/{case_id}", timeout=10)
+    r = SESSION.get(f"{BASE}/cases/{case_id}", timeout=10)
     check("断言 JSON 完整保存", r.status_code == 200 and len(r.json()["assertions_json"]) == 2)
 
     # 列表接口必须带断言/提取的条数，否则列表页那两列永远显示 0（踩过的真实 bug）
-    r = requests.get(f"{BASE}/projects/{pid}/cases", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/cases", timeout=10)
     row = next((c for c in r.json() if c["id"] == case_id), {})
     check("列表接口带断言与提取条数（列表页展示用）",
           r.status_code == 200
@@ -242,14 +263,14 @@ def main() -> int:
     check("列表接口带 data_file（执行弹窗判断数据驱动用）",
           "data_file" in row, str(sorted(row.keys()))[:120])
 
-    r = requests.get(f"{BASE}/projects/{pid}/cases", params={"type": "api"}, timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/cases", params={"type": "api"}, timeout=10)
     check("按类型筛选", r.status_code == 200 and len(r.json()) == 1)
 
-    r = requests.get(f"{BASE}/projects/{pid}/cases", params={"keyword": "验收"}, timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/cases", params={"keyword": "验收"}, timeout=10)
     check("按中文关键字筛选", r.status_code == 200 and len(r.json()) == 1)
 
     section("Day 2 · 执行闭环 ★")
-    r = requests.post(f"{BASE}/cases/{case_id}/run", json={"env_id": env_id, "timeout": 30}, timeout=60)
+    r = SESSION.post(f"{BASE}/cases/{case_id}/run", json={"env_id": env_id, "timeout": 30}, timeout=60)
     check("执行用例", r.status_code == 200)
     if r.status_code == 200:
         ex = r.json()
@@ -274,19 +295,19 @@ def main() -> int:
     else:
         execution_id = None
 
-    r = requests.get(f"{BASE}/executions", params={"project_id": pid}, timeout=10)
+    r = SESSION.get(f"{BASE}/executions", params={"project_id": pid}, timeout=10)
     check("执行历史可查", r.status_code == 200 and any(e["id"] == execution_id for e in r.json()))
     row = next((e for e in r.json() if e["id"] == execution_id), {})
     check("历史列表带用例名", row.get("case_name") == "GET /get 验收用例", row.get("case_name"))
 
-    r = requests.get(f"{BASE}/executions", params={"project_id": pid, "status": "pass"}, timeout=10)
+    r = SESSION.get(f"{BASE}/executions", params={"project_id": pid, "status": "pass"}, timeout=10)
     check("按状态筛选执行记录",
           r.status_code == 200 and any(e["id"] == execution_id for e in r.json()))
-    r = requests.get(f"{BASE}/executions", params={"project_id": pid, "status": "fail"}, timeout=10)
+    r = SESSION.get(f"{BASE}/executions", params={"project_id": pid, "status": "fail"}, timeout=10)
     check("状态筛选排除不匹配记录",
           r.status_code == 200 and all(e["status"] == "fail" for e in r.json()))
 
-    r = requests.get(f"{BASE}/executions/{execution_id}", timeout=10)
+    r = SESSION.get(f"{BASE}/executions/{execution_id}", timeout=10)
     check("执行详情带用例名与结果",
           r.status_code == 200
           and r.json().get("case_name") == "GET /get 验收用例"
@@ -294,7 +315,7 @@ def main() -> int:
 
     section("Day 3 · 测试报告")
     report_name = None
-    r = requests.post(f"{BASE}/projects/{pid}/reports",
+    r = SESSION.post(f"{BASE}/projects/{pid}/reports",
                       json={"execution_ids": [execution_id]}, timeout=30)
     check("生成 HTML 报告", r.status_code == 200 and r.json().get("filename", "").endswith(".html"))
     if r.status_code == 200:
@@ -305,18 +326,18 @@ def main() -> int:
               f"{stats['passed']}/{stats['total']} 通过率 {stats['rate']}")
 
     if report_name:
-        r = requests.get(f"{BASE}/reports/{report_name}", timeout=10)
+        r = SESSION.get(f"{BASE}/reports/{report_name}", timeout=10)
         check("报告内容含用例名与断言结论",
               r.status_code == 200
               and "GET /get 验收用例" in r.text
               and "响应体" in r.text
               and "测试报告" in r.text)
 
-        r = requests.get(f"{BASE}/reports", timeout=10)
+        r = SESSION.get(f"{BASE}/reports", timeout=10)
         check("报告列表能查到新报告",
               r.status_code == 200 and any(f["filename"] == report_name for f in r.json()))
 
-        r = requests.get(f"{BASE}/reports/..%2Fconfig.py", timeout=10)
+        r = SESSION.get(f"{BASE}/reports/..%2Fconfig.py", timeout=10)
         check("报告接口挡住路径穿越", r.status_code in (400, 404))
 
     # ==================== Day 3 · 场景串联（3b）====================
@@ -324,7 +345,7 @@ def main() -> int:
 
     # 步骤 1：提取 httpbin 返回的 url；步骤 2：直接把这个变量当 URL 用
     # —— 如果 ${echo_url} 没被解析，请求会因 URL 非法而报错，所以「步骤 2 通过」即证明串联生效
-    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
         "name": "串联-步骤1 提取 url",
         "type": "api", "method": "GET", "url": "https://httpbin.org/get",
         "assertions_json": [
@@ -334,7 +355,7 @@ def main() -> int:
     }, timeout=10)
     step1_case = r.json()["id"]
 
-    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
         "name": "串联-步骤2 引用 ${echo_url}",
         "type": "api", "method": "GET",
         "url": "${echo_url}",  # 上一步提取的变量
@@ -345,7 +366,7 @@ def main() -> int:
     step2_case = r.json()["id"]
 
     # 一条必然失败的用例，用来验证 fail_strategy=stop
-    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
         "name": "串联-必然失败",
         "type": "api", "method": "GET", "url": "https://httpbin.org/get",
         "assertions_json": [
@@ -354,7 +375,7 @@ def main() -> int:
     }, timeout=10)
     fail_case = r.json()["id"]
 
-    r = requests.post(f"{BASE}/projects/{pid}/scenarios", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/scenarios", json={
         "name": "登录链路串联验收",
         "description": "步骤1 提取变量，步骤2 引用变量",
         "steps": [
@@ -365,7 +386,7 @@ def main() -> int:
     check("新建场景", r.status_code == 201)
     scenario_id = r.json().get("id") if r.status_code == 201 else None
 
-    r = requests.get(f"{BASE}/scenarios/{scenario_id}", timeout=10)
+    r = SESSION.get(f"{BASE}/scenarios/{scenario_id}", timeout=10)
     detail = r.json() if r.status_code == 200 else {}
     check("场景详情带用例名与顺序",
           r.status_code == 200
@@ -373,11 +394,11 @@ def main() -> int:
           ["串联-步骤1 提取 url", "串联-步骤2 引用 ${echo_url}"]
           and [s["step_order"] for s in detail.get("steps", [])] == [1, 2])
 
-    r = requests.get(f"{BASE}/projects/{pid}/scenarios", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/scenarios", timeout=10)
     row = next((s for s in r.json() if s["id"] == scenario_id), {})
     check("场景列表带步骤数", r.status_code == 200 and row.get("step_count") == 2)
 
-    r = requests.post(f"{BASE}/scenarios/{scenario_id}/run", json={"env_id": env_id}, timeout=90)
+    r = SESSION.post(f"{BASE}/scenarios/{scenario_id}/run", json={"env_id": env_id}, timeout=90)
     check("执行场景", r.status_code == 200)
     if r.status_code == 200:
         run = r.json()
@@ -392,13 +413,13 @@ def main() -> int:
         check("场景变量汇总含提取结果",
               run["variables"].get("echo_url") == "https://httpbin.org/get")
 
-        r2 = requests.get(f"{BASE}/executions", params={"project_id": pid}, timeout=10)
+        r2 = SESSION.get(f"{BASE}/executions", params={"project_id": pid}, timeout=10)
         recorded = {e["case_id"] for e in r2.json()}
         check("场景各步骤落了执行记录",
               step1_case in recorded and step2_case in recorded)
 
     # fail_strategy=stop：前一步失败，后一步应记为 skip 且不执行
-    r = requests.post(f"{BASE}/projects/{pid}/scenarios", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/scenarios", json={
         "name": "失败中止验收",
         "steps": [
             {"case_id": fail_case, "fail_strategy": "stop"},
@@ -407,7 +428,7 @@ def main() -> int:
     }, timeout=10)
     stop_scenario = r.json()["id"] if r.status_code == 201 else None
 
-    r = requests.post(f"{BASE}/scenarios/{stop_scenario}/run", json={"env_id": env_id}, timeout=90)
+    r = SESSION.post(f"{BASE}/scenarios/{stop_scenario}/run", json={"env_id": env_id}, timeout=90)
     if r.status_code == 200:
         run = r.json()
         check("失败即中止（fail_strategy=stop）",
@@ -416,14 +437,14 @@ def main() -> int:
               and run["steps"][1]["status"] == "skip",
               f"{run['steps'][0]['status']} → {run['steps'][1]['status']}")
 
-    r = requests.delete(f"{BASE}/scenarios/{stop_scenario}", timeout=10)
+    r = SESSION.delete(f"{BASE}/scenarios/{stop_scenario}", timeout=10)
     check("删除场景", r.status_code == 204)
 
     # ==================== Day 3 · 数据驱动（任务 4）====================
     section("Day 3 · 数据驱动 ★")
 
     csv_text = "keyword,note\n苹果,第一个\n香蕉,第二个\n橙子,第三个\n"
-    r = requests.post(f"{BASE}/projects/{pid}/datasets",
+    r = SESSION.post(f"{BASE}/projects/{pid}/datasets",
                       files={"file": ("demo_params.csv", csv_text.encode("utf-8"), "text/csv")},
                       timeout=10)
     check("上传 CSV 数据文件", r.status_code == 201, r.text[:100] if r.status_code != 201 else "")
@@ -432,30 +453,30 @@ def main() -> int:
           ds.get("rows") == 3 and ds.get("columns") == ["keyword", "note"],
           f"{ds.get('rows')} 行 / {ds.get('columns')}")
 
-    r = requests.get(f"{BASE}/projects/{pid}/datasets", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/datasets", timeout=10)
     check("数据文件列表可查",
           r.status_code == 200 and any(d["filename"] == "demo_params.csv" for d in r.json()))
 
-    r = requests.get(f"{BASE}/projects/{pid}/datasets/demo_params.csv/preview", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/datasets/demo_params.csv/preview", timeout=10)
     check("预览数据文件",
           r.status_code == 200
           and len(r.json()["sample"]) == 3
           and r.json()["sample"][0]["keyword"] == "苹果")
 
     # 只有表头 → 应当报错，而不是静默跑 0 次
-    r = requests.post(f"{BASE}/projects/{pid}/datasets",
+    r = SESSION.post(f"{BASE}/projects/{pid}/datasets",
                       files={"file": ("empty.csv", "keyword,note\n".encode("utf-8"), "text/csv")},
                       timeout=10)
     check("只有表头的文件被拒（400）", r.status_code == 400, str(r.status_code))
 
     # 文件名越界 → 应当被挡
-    r = requests.post(f"{BASE}/projects/{pid}/datasets",
+    r = SESSION.post(f"{BASE}/projects/{pid}/datasets",
                       files={"file": ("../evil.csv", "a\n1\n".encode("utf-8"), "text/csv")},
                       timeout=10)
     check("数据文件名挡路径穿越", r.status_code == 400, str(r.status_code))
 
     # 绑定数据文件并按行执行：URL 里用 ${keyword}，断言也用 ${keyword}（两者都要被解析）
-    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
         "name": "数据驱动-逐行请求",
         "type": "api",
         "method": "GET",
@@ -469,7 +490,7 @@ def main() -> int:
     check("用例绑定数据文件", r.status_code == 201)
     dd_case = r.json().get("id") if r.status_code == 201 else None
 
-    r = requests.post(f"{BASE}/cases/{dd_case}/run-data-driven", json={"env_id": env_id}, timeout=120)
+    r = SESSION.post(f"{BASE}/cases/{dd_case}/run-data-driven", json={"env_id": env_id}, timeout=120)
     check("按数据行执行", r.status_code == 200, r.text[:120] if r.status_code != 200 else "")
     if r.status_code == 200:
         run = r.json()
@@ -488,10 +509,10 @@ def main() -> int:
               " | ".join(urls))
 
     # 没绑数据文件的用例走该接口应当明确报错
-    r = requests.post(f"{BASE}/cases/{case_id}/run-data-driven", json={"env_id": env_id}, timeout=30)
+    r = SESSION.post(f"{BASE}/cases/{case_id}/run-data-driven", json={"env_id": env_id}, timeout=30)
     check("未绑定数据文件时返回 400", r.status_code == 400, str(r.status_code))
 
-    r = requests.delete(f"{BASE}/projects/{pid}/datasets/demo_params.csv", timeout=10)
+    r = SESSION.delete(f"{BASE}/projects/{pid}/datasets/demo_params.csv", timeout=10)
     check("删除数据文件", r.status_code == 204)
 
     # ==================== Day 4 · Web UI 执行（Selenium）====================
@@ -502,7 +523,7 @@ def main() -> int:
     web_report_name = None
     web_case = None  # 浏览器不可用时整段跳过，先占位，Day 5 段要用
 
-    r = requests.get(f"{BASE}/web/status", timeout=15)
+    r = SESSION.get(f"{BASE}/web/status", timeout=15)
     if r.status_code != 200 or not r.json().get("available"):
         # 没有浏览器就跳过整段，且**不计入总数** —— 让无 GUI 的机器上仍是全绿
         reason = r.json().get("error", r.status_code) if r.status_code == 200 else r.status_code
@@ -511,10 +532,10 @@ def main() -> int:
         check("Web 环境探测（浏览器可用）", True,
               r.json()["browsers"]["chrome"]["detail"])
 
-        r = requests.get(DEMO_URL, timeout=10)
+        r = SESSION.get(DEMO_URL, timeout=10)
         check("离线演示页可访问", r.status_code == 200 and 'id="login-btn"' in r.text)
 
-        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
             "name": "Web-覆盖全部 15 种操作",
             "type": "web",
             "steps_json": [
@@ -563,7 +584,7 @@ def main() -> int:
         web_case = r.json().get("id") if r.status_code == 201 else None
 
         if web_case:
-            detail = requests.get(f"{BASE}/cases/{web_case}", timeout=10).json()
+            detail = SESSION.get(f"{BASE}/cases/{web_case}", timeout=10).json()
             steps = detail.get("steps_json") or []
             check("Web 步骤原样保存", detail.get("type") == "web" and len(steps) == 19,
                   f'type={detail.get("type")} steps={len(steps)}')
@@ -573,7 +594,7 @@ def main() -> int:
                                     "wait_seconds", "description", "locator_type", "locator_value"},
                   str(sorted(steps[0])))
 
-            r = requests.post(f"{BASE}/cases/{web_case}/run-web",
+            r = SESSION.post(f"{BASE}/cases/{web_case}/run-web",
                               json={"browser": "chrome", "headless": True, "timeout": 180},
                               timeout=300)
             check("执行 Web 用例", r.status_code == 200)
@@ -594,13 +615,13 @@ def main() -> int:
                 shots = [s for step in step_results for s in step["screenshots"]]
                 check("手动截图步骤产出了文件", bool(shots), str(shots[:1]))
                 if shots:
-                    r2 = requests.get(f"{BASE}/reports/{shots[0]}", timeout=10)
+                    r2 = SESSION.get(f"{BASE}/reports/{shots[0]}", timeout=10)
                     check("截图可通过接口取到",
                           r2.status_code == 200 and "image" in r2.headers.get("content-type", ""),
                           f'{r2.status_code} {r2.headers.get("content-type")}')
 
         # 一条必然失败的用例：这条断言守的就是「失败自动截图从未生效」那个老 bug
-        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
             "name": "Web-必然失败", "type": "web",
             "steps_json": [
                 {"step_order": 1, "action_type": "open_url", "input_value": DEMO_URL,
@@ -613,7 +634,7 @@ def main() -> int:
         fail_case = r.json().get("id") if r.status_code == 201 else None
 
         if fail_case:
-            r = requests.post(f"{BASE}/cases/{fail_case}/run-web",
+            r = SESSION.post(f"{BASE}/cases/{fail_case}/run-web",
                               json={"browser": "chrome", "headless": True, "timeout": 120},
                               timeout=300)
             check("失败 Web 用例记为 fail", r.status_code == 200 and r.json()["status"] == "fail")
@@ -628,37 +649,37 @@ def main() -> int:
 
         # 类型守卫 + 空步骤守卫
         if case_id:
-            r = requests.post(f"{BASE}/cases/{case_id}/run-web", json={}, timeout=30)
+            r = SESSION.post(f"{BASE}/cases/{case_id}/run-web", json={}, timeout=30)
             check("接口用例调 run-web 返回 400", r.status_code == 400, str(r.status_code))
-        r = requests.post(f"{BASE}/projects/{pid}/cases",
+        r = SESSION.post(f"{BASE}/projects/{pid}/cases",
                           json={"name": "Web-空步骤", "type": "web", "steps_json": []}, timeout=10)
         if r.status_code == 201:
-            r = requests.post(f"{BASE}/cases/{r.json()['id']}/run-web", json={}, timeout=30)
+            r = SESSION.post(f"{BASE}/cases/{r.json()['id']}/run-web", json={}, timeout=30)
             check("无步骤 Web 用例返回 400", r.status_code == 400, str(r.status_code))
 
         # 步骤校验：未知操作 / 缺定位，都应在写库前被 422 挡下
-        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
             "name": "Web-非法操作", "type": "web",
             "steps_json": [{"step_order": 1, "action_type": "no_such_action"}]}, timeout=10)
         check("未知操作类型返回 422", r.status_code == 422, str(r.status_code))
-        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
             "name": "Web-缺定位", "type": "web",
             "steps_json": [{"step_order": 1, "action_type": "click", "input_value": ""}]}, timeout=10)
         check("需要定位却没填返回 422", r.status_code == 422, str(r.status_code))
 
         # 截图接口的路径穿越防护
-        r = requests.get(f"{BASE}/reports/screenshots/..%2F..%2F..%2Fconfig.py", timeout=10)
+        r = SESSION.get(f"{BASE}/reports/screenshots/..%2F..%2F..%2Fconfig.py", timeout=10)
         check("截图接口挡住路径穿越", r.status_code in (400, 404), str(r.status_code))
 
         # Web 报告：步骤表 + 截图都要出现在 HTML 里
         if web_execution_ids:
-            r = requests.post(f"{BASE}/projects/{pid}/reports",
+            r = SESSION.post(f"{BASE}/projects/{pid}/reports",
                               json={"execution_ids": web_execution_ids, "test_type": "web"},
                               timeout=60)
             check("生成 Web 报告", r.status_code == 200)
             if r.status_code == 200:
                 web_report_name = r.json()["filename"]
-                html = requests.get(f"{BASE}/reports/{web_report_name}", timeout=10).text
+                html = SESSION.get(f"{BASE}/reports/{web_report_name}", timeout=10).text
                 check("Web 报告含步骤描述与截图",
                       "打开 URL" in html and "<img src=" in html and "screenshots/" in html)
 
@@ -668,7 +689,7 @@ def main() -> int:
         upload_file.write_text("upload demo", encoding="utf-8")
 
         new_ops_case = None
-        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
             "name": "Web-新增 16 种操作",
             "type": "web",
             "steps_json": new_ops_steps(str(upload_file)),
@@ -678,7 +699,7 @@ def main() -> int:
         new_ops_case = r.json().get("id") if r.status_code == 201 else None
 
         if new_ops_case:
-            r = requests.post(f"{BASE}/cases/{new_ops_case}/run-web",
+            r = SESSION.post(f"{BASE}/cases/{new_ops_case}/run-web",
                               json={"browser": "chrome", "headless": True, "timeout": 300},
                               timeout=480)
             check("执行新增操作用例", r.status_code == 200)
@@ -717,18 +738,18 @@ def main() -> int:
                       f'{ex["status"]} {ex["duration_ms"]}ms')
 
         # 新字段的校验：规格里标了 required 的字段没填，应在写库前被 422 挡下
-        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
             "name": "Web-拖拽缺目标元素", "type": "web",
             "steps_json": [{"step_order": 1, "action_type": "drag_and_drop",
                             "locator_type": "id", "locator_value": "drag-src"}]}, timeout=10)
         check("拖拽缺目标元素返回 422", r.status_code == 422, str(r.status_code))
-        r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
             "name": "Web-下拉缺选项值", "type": "web",
             "steps_json": [{"step_order": 1, "action_type": "select_option",
                             "locator_type": "id", "locator_value": "city-select"}]}, timeout=10)
         check("下拉框选择缺选项值返回 422", r.status_code == 422, str(r.status_code))
 
-        r = requests.get(f"{BASE}/web/status", timeout=15)
+        r = SESSION.get(f"{BASE}/web/status", timeout=15)
         actions = {a["value"]: a for a in r.json().get("actions", [])}
         check("操作枚举已扩到 31 种", len(actions) == 31, f"{len(actions)} 种")
         check("每个操作都下发了字段规格",
@@ -747,7 +768,7 @@ def main() -> int:
     # 计划用「一组互不依赖的用例 + 一个默认环境」，这里凑一条接口 + 一条 Web
     plan_case_ids = [case_id] + ([web_case] if web_case else [])
 
-    r = requests.post(f"{BASE}/projects/{pid}/plans", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/plans", json={
         "name": "验收计划·混合", "description": "接口 + Web",
         "env_id": env_id,
         "cases": [{"case_id": c} for c in plan_case_ids],
@@ -755,13 +776,13 @@ def main() -> int:
     check("新建计划", r.status_code == 201)
     plan_id = r.json().get("id") if r.status_code == 201 else None
 
-    r = requests.get(f"{BASE}/projects/{pid}/plans", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/plans", timeout=10)
     row = next((p for p in r.json() if p["id"] == plan_id), {})
     check("计划列表带用例数与环境名",
           row.get("case_count") == len(plan_case_ids) and row.get("env_name") is not None,
           f"{row.get('case_count')} 条 / 环境 {row.get('env_name')}")
 
-    r = requests.get(f"{BASE}/plans/{plan_id}", timeout=10)
+    r = SESSION.get(f"{BASE}/plans/{plan_id}", timeout=10)
     detail = r.json()
     check("计划详情带用例名与类型",
           len(detail["cases"]) == len(plan_case_ids)
@@ -769,7 +790,7 @@ def main() -> int:
     check("step_order 按提交顺序由后端编号",
           [c["step_order"] for c in detail["cases"]] == list(range(1, len(plan_case_ids) + 1)))
 
-    r = requests.post(f"{BASE}/plans/{plan_id}/run", json={"timeout": 30}, timeout=600)
+    r = SESSION.post(f"{BASE}/plans/{plan_id}/run", json={"timeout": 30}, timeout=600)
     check("执行计划（接口 + Web 混合）", r.status_code == 200)
     run = r.json() if r.status_code == 200 else {}
     if run:
@@ -779,51 +800,51 @@ def main() -> int:
         check("每条执行记录都带 plan_id",
               all(c["plan_id"] == plan_id for c in run["cases"]),
               str([c["plan_id"] for c in run["cases"]]))
-        history = {e["id"] for e in requests.get(
+        history = {e["id"] for e in SESSION.get(
             f"{BASE}/executions", params={"project_id": pid}, timeout=10).json()}
         check("计划产生的执行记录出现在执行中心",
               all(c["id"] in history for c in run["cases"]))
         web_execution_ids.extend(c["id"] for c in run["cases"])
 
     # ---------- 边界 ----------
-    tmp_plan = requests.post(f"{BASE}/projects/{pid}/plans",
+    tmp_plan = SESSION.post(f"{BASE}/projects/{pid}/plans",
                              json={"name": "验收计划·边界"}, timeout=10).json()["id"]
 
-    r = requests.post(f"{BASE}/plans/{tmp_plan}/run", json={}, timeout=10)
+    r = SESSION.post(f"{BASE}/plans/{tmp_plan}/run", json={}, timeout=10)
     check("空计划执行返回 400", r.status_code == 400, r.json().get("detail", ""))
 
-    requests.put(f"{BASE}/plans/{tmp_plan}", json={
+    SESSION.put(f"{BASE}/plans/{tmp_plan}", json={
         "cases": [{"case_id": case_id, "enabled": False}]}, timeout=10)
-    r = requests.post(f"{BASE}/plans/{tmp_plan}/run", json={}, timeout=10)
+    r = SESSION.post(f"{BASE}/plans/{tmp_plan}/run", json={}, timeout=10)
     check("用例全停用时执行返回 400", r.status_code == 400, r.json().get("detail", ""))
 
     # 停用的用例只计数、不执行（同一条用例挂两条，其中一条停用）
-    requests.put(f"{BASE}/plans/{tmp_plan}", json={
+    SESSION.put(f"{BASE}/plans/{tmp_plan}", json={
         "cases": [{"case_id": case_id, "enabled": True},
                   {"case_id": case_id, "enabled": False}]}, timeout=10)
-    r = requests.post(f"{BASE}/plans/{tmp_plan}/run", json={"timeout": 30}, timeout=120)
+    r = SESSION.post(f"{BASE}/plans/{tmp_plan}/run", json={"timeout": 30}, timeout=120)
     run2 = r.json()
     check("停用的用例被跳过并计数",
           r.status_code == 200 and run2["total"] == 1 and run2["skipped"] == 1,
           f"执行 {run2['total']} 条 / 跳过 {run2['skipped']} 条")
     web_execution_ids.extend(c["id"] for c in run2["cases"])
 
-    r = requests.get(f"{BASE}/plans/999999", timeout=10)
+    r = SESSION.get(f"{BASE}/plans/999999", timeout=10)
     check("不存在的计划返回 404", r.status_code == 404)
-    r = requests.delete(f"{BASE}/plans/{tmp_plan}", timeout=10)
+    r = SESSION.delete(f"{BASE}/plans/{tmp_plan}", timeout=10)
     check("删除计划", r.status_code == 204)
-    r = requests.get(f"{BASE}/plans/{tmp_plan}", timeout=10)
+    r = SESSION.get(f"{BASE}/plans/{tmp_plan}", timeout=10)
     check("删除后计划查不到（404）", r.status_code == 404)
 
     # 删用例时计划里的关联被外键级联清掉 —— 这正是用关联表而不是 JSON 串的理由
-    doomed = requests.post(f"{BASE}/projects/{pid}/cases", json={
+    doomed = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
         "name": "验收·待删用例", "type": "api",
         "method": "GET", "url": "https://httpbin.org/status/204"}, timeout=10).json()["id"]
-    r = requests.put(f"{BASE}/plans/{plan_id}", json={
+    r = SESSION.put(f"{BASE}/plans/{plan_id}", json={
         "cases": [{"case_id": c} for c in plan_case_ids] + [{"case_id": doomed}]}, timeout=10)
     check("计划加入一条临时用例", len(r.json()["cases"]) == len(plan_case_ids) + 1)
-    requests.delete(f"{BASE}/cases/{doomed}", timeout=10)
-    r = requests.get(f"{BASE}/plans/{plan_id}", timeout=10)
+    SESSION.delete(f"{BASE}/cases/{doomed}", timeout=10)
+    r = SESSION.get(f"{BASE}/plans/{plan_id}", timeout=10)
     check("用例被删后，计划里的关联自动清掉（外键级联）",
           len(r.json()["cases"]) == len(plan_case_ids),
           f"剩 {len(r.json()['cases'])} 条")
@@ -832,7 +853,7 @@ def main() -> int:
     section("缺陷管理 · 一键转入与状态流转")
 
     # 先造一条注定失败的执行：断言 500 响应等于 200
-    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
         "name": "验收·注定失败用例", "type": "api",
         "method": "GET", "url": "https://httpbin.org/status/500",
         "assertions_json": [
@@ -840,13 +861,13 @@ def main() -> int:
         ],
     }, timeout=10)
     fail_case_id = r.json().get("id")
-    r = requests.post(f"{BASE}/cases/{fail_case_id}/run", json={"timeout": 30}, timeout=60)
+    r = SESSION.post(f"{BASE}/cases/{fail_case_id}/run", json={"timeout": 30}, timeout=60)
     fail_execution = r.json() if r.status_code == 200 else {}
     check("造出一条失败的执行记录", fail_execution.get("status") == "fail",
           str(fail_execution.get("status")))
     fail_exec_id = fail_execution.get("id")
 
-    r = requests.post(f"{BASE}/executions/{fail_exec_id}/defect", json={}, timeout=10)
+    r = SESSION.post(f"{BASE}/executions/{fail_exec_id}/defect", json={}, timeout=10)
     check("从失败的执行一键提缺陷", r.status_code == 201, r.text[:120])
     defect = r.json() if r.status_code == 201 else {}
     defect_id = defect.get("id")
@@ -863,52 +884,52 @@ def main() -> int:
     check("详情回填用例名", defect.get("case_name") == "验收·注定失败用例",
           str(defect.get("case_name")))
 
-    r = requests.post(f"{BASE}/executions/{fail_exec_id}/defect", json={}, timeout=10)
+    r = SESSION.post(f"{BASE}/executions/{fail_exec_id}/defect", json={}, timeout=10)
     check("同一执行重复提缺陷返回 409", r.status_code == 409)
     conflict = r.json().get("detail") if r.status_code == 409 else {}
     check("409 带上已有缺陷 id（前端据此跳转）",
           isinstance(conflict, dict) and conflict.get("defect_id") == defect_id, str(conflict))
 
-    r = requests.post(f"{BASE}/executions/{execution_id}/defect", json={}, timeout=10)
+    r = SESSION.post(f"{BASE}/executions/{execution_id}/defect", json={}, timeout=10)
     check("通过的执行记录拒绝提缺陷（400）", r.status_code == 400, r.text[:80])
 
-    r = requests.get(f"{BASE}/projects/{pid}/defects", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/defects", timeout=10)
     check("缺陷列表", r.status_code == 200 and any(d["id"] == defect_id for d in r.json()))
     row = next((d for d in r.json() if d["id"] == defect_id), {})
     check("列表带关联用例名", row.get("case_name") == "验收·注定失败用例", str(row.get("case_name")))
 
-    r = requests.get(f"{BASE}/projects/{pid}/defects", params={"status": "新建"}, timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/defects", params={"status": "新建"}, timeout=10)
     check("按状态筛选", r.status_code == 200 and all(d["status"] == "新建" for d in r.json()))
-    r = requests.get(f"{BASE}/projects/{pid}/defects", params={"keyword": "注定失败"}, timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/defects", params={"keyword": "注定失败"}, timeout=10)
     check("按标题关键字筛选", r.status_code == 200 and len(r.json()) == 1, f"{len(r.json())} 条")
-    r = requests.get(f"{BASE}/projects/{pid}/defects", params={"severity": "致命"}, timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}/defects", params={"severity": "致命"}, timeout=10)
     check("按严重程度筛选排除不匹配", r.status_code == 200 and len(r.json()) == 0)
 
-    r = requests.put(f"{BASE}/defects/{defect_id}",
+    r = SESSION.put(f"{BASE}/defects/{defect_id}",
                      json={"status": "处理中", "severity": "严重"}, timeout=10)
     check("更新缺陷（状态流转 + 严重程度）",
           r.status_code == 200 and r.json()["status"] == "处理中"
           and r.json()["severity"] == "严重")
 
-    r = requests.put(f"{BASE}/defects/{defect_id}", json={"status": "瞎写的状态"}, timeout=10)
+    r = SESSION.put(f"{BASE}/defects/{defect_id}", json={"status": "瞎写的状态"}, timeout=10)
     check("非法状态值返回 422", r.status_code == 422)
-    r = requests.post(f"{BASE}/projects/{pid}/defects", json={"title": ""}, timeout=10)
+    r = SESSION.post(f"{BASE}/projects/{pid}/defects", json={"title": ""}, timeout=10)
     check("空标题返回 422", r.status_code == 422)
 
-    r = requests.post(f"{BASE}/projects/{pid}/defects", json={
+    r = SESSION.post(f"{BASE}/projects/{pid}/defects", json={
         "title": "手工缺陷", "description": "不关联执行", "severity": "轻微", "priority": "P3",
     }, timeout=10)
     check("手工新建缺陷（不关联执行）",
           r.status_code == 201 and r.json().get("execution_id") is None)
 
-    r = requests.post(f"{BASE}/executions/999999/defect", json={}, timeout=10)
+    r = SESSION.post(f"{BASE}/executions/999999/defect", json={}, timeout=10)
     check("不存在的执行提缺陷返回 404", r.status_code == 404)
-    r = requests.get(f"{BASE}/defects/999999", timeout=10)
+    r = SESSION.get(f"{BASE}/defects/999999", timeout=10)
     check("不存在的缺陷返回 404", r.status_code == 404)
 
     # 用例被删后缺陷仍在，只有 case_id 被外键置空（SET NULL）——执行记录也还在
-    requests.delete(f"{BASE}/cases/{fail_case_id}", timeout=10)
-    r = requests.get(f"{BASE}/defects/{defect_id}", timeout=10)
+    SESSION.delete(f"{BASE}/cases/{fail_case_id}", timeout=10)
+    r = SESSION.get(f"{BASE}/defects/{defect_id}", timeout=10)
     check("用例被删后缺陷保留，case_id 置空（外键 SET NULL）",
           r.status_code == 200 and r.json()["case_id"] is None
           and r.json()["execution_id"] == fail_exec_id,
@@ -917,12 +938,12 @@ def main() -> int:
     # ==================== 清理 ====================
     section("清理验收数据")
     if case_id:
-        requests.delete(f"{BASE}/cases/{case_id}", timeout=10)
+        SESSION.delete(f"{BASE}/cases/{case_id}", timeout=10)
     if env_id:
-        requests.delete(f"{BASE}/environments/{env_id}", timeout=10)
+        SESSION.delete(f"{BASE}/environments/{env_id}", timeout=10)
     if pid:
-        requests.delete(f"{BASE}/projects/{pid}", timeout=10)
-    r = requests.get(f"{BASE}/projects/{pid}", timeout=10)
+        SESSION.delete(f"{BASE}/projects/{pid}", timeout=10)
+    r = SESSION.get(f"{BASE}/projects/{pid}", timeout=10)
     check("级联删除生效（项目 404）", r.status_code == 404)
 
     # 验收生成的报告文件与截图目录一并清掉，避免 reports/platform 越积越多

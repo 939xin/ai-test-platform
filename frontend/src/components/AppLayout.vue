@@ -1,14 +1,17 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import {
   Calendar, Connection, DataAnalysis, Document, Folder, MagicStick,
-  Monitor, Setting, Tools, VideoPlay, Warning,
+  Monitor, Setting, SwitchButton, Tools, VideoPlay, Warning,
 } from '@element-plus/icons-vue'
 
 import { fetchHealth } from '@/api/health'
+import { clearSession, getUsername } from '@/api/session'
 
 const route = useRoute()
+const router = useRouter()
 
 // 侧栏导航 —— 与 router/index.js 的 name 一一对应
 const navItems = [
@@ -53,6 +56,26 @@ async function checkHealth() {
 }
 
 onMounted(checkHealth)
+
+// 当前登录用户 —— 头像取名字首字，中文名比「鑫」这个固定字更像「这是我的账号」
+const username = ref(getUsername())
+const avatarText = computed(() => (username.value || '?').slice(0, 1).toUpperCase())
+
+async function onUserCommand(command) {
+  if (command !== 'logout') return
+  try {
+    await ElMessageBox.confirm('退出后需要重新登录，确定吗？', '退出登录', {
+      type: 'warning',
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return // 点了取消
+  }
+  clearSession()
+  username.value = ''
+  router.push({ name: 'login' })
+}
 </script>
 
 <template>
@@ -92,7 +115,17 @@ onMounted(checkHealth)
           <el-breadcrumb-item>{{ pageTitle }}</el-breadcrumb-item>
         </el-breadcrumb>
         <div class="topbar-right">
-          <el-avatar :size="28" class="avatar">鑫</el-avatar>
+          <el-dropdown trigger="click" @command="onUserCommand">
+            <span class="user">
+              <el-avatar :size="28" class="avatar">{{ avatarText }}</el-avatar>
+              <span class="user-name">{{ username || '未登录' }}</span>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="logout" :icon="SwitchButton">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </header>
 
@@ -270,6 +303,26 @@ onMounted(checkHealth)
 .avatar {
   background: var(--brand-700);
   font-size: 13px;
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+  transition: background 0.14s ease;
+}
+
+.user:hover {
+  background: var(--bg-sunken);
+}
+
+.user-name {
+  font-size: 13.5px;
+  color: var(--text-2);
 }
 
 .content {
