@@ -7,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app.api import (
-    auth, cases, datasets, environments, executions, health, plans, projects, reports, scenarios, web,
+    auth, cases, datasets, defects, environments, executions, health, plans, projects, reports,
+    scenarios, web,
 )
 from app.config import settings
 
@@ -56,6 +57,7 @@ app.include_router(reports.router, prefix="/api", tags=["reports"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
 app.include_router(plans.router, prefix="/api", tags=["plans"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
+app.include_router(defects.router, prefix="/api", tags=["defects"])
 app.include_router(web.router, prefix="/api", tags=["web"])
 
 # Web UI 测试的离线演示页。挂在 /api 之下，前端 vite proxy 和验收脚本的 BASE

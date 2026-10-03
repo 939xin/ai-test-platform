@@ -1,12 +1,43 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Warning } from '@element-plus/icons-vue'
 
 import StatusTag from '@/components/StatusTag.vue'
+import { createDefectFromExecution } from '@/api/defect'
 
 const props = defineProps({
   // 一次执行记录（ExecutionOut）：{ status, duration_ms, result_json }
   execution: { type: Object, required: true },
 })
+
+// 提完缺陷后由父组件负责跳转到缺陷页
+const emit = defineEmits(['goto-defect'])
+
+const defectSubmitting = ref(false)
+
+// 只有失败 / 错误才值得提缺陷，通过的执行记录后端也会拒
+const canRaiseDefect = computed(
+  () => props.execution.status === 'fail' || props.execution.status === 'error',
+)
+
+async function raiseDefect() {
+  if (defectSubmitting.value) return
+  defectSubmitting.value = true
+  try {
+    const defect = await createDefectFromExecution(props.execution.id)
+    ElMessage.success(`已创建缺陷 #${defect.id}`)
+    emit('goto-defect', defect.id)
+  } catch (error) {
+    // 409：这条执行已经提过缺陷，后端把已有缺陷 id 放在 detail 里，直接跳过去
+    const detail = error.response?.data?.detail
+    if (error.response?.status === 409 && detail?.defect_id) {
+      emit('goto-defect', detail.defect_id)
+    }
+  } finally {
+    defectSubmitting.value = false
+  }
+}
 
 // 提取到的变量：{变量名: 值}，没配提取规则时为空
 const extracted = computed(() => props.execution.result_json?.extracted || {})
@@ -45,6 +76,18 @@ function prettyJson(value) {
       <span v-if="execution.result_json?.error_msg" class="mono error">
         {{ execution.result_json.error_msg }}
       </span>
+      <el-button
+        v-if="canRaiseDefect"
+        class="summary-actions"
+        type="primary"
+        plain
+        size="small"
+        :icon="Warning"
+        :loading="defectSubmitting"
+        @click="raiseDefect"
+      >
+        提缺陷
+      </el-button>
     </div>
 
     <el-tabs>
@@ -148,6 +191,11 @@ function prettyJson(value) {
 .summary-item {
   font-size: 13px;
   color: var(--text-2);
+}
+
+/* 按钮推到最右，与左侧状态 / 耗时拉开 */
+.summary-actions {
+  margin-left: auto;
 }
 
 .error {

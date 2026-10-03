@@ -126,7 +126,7 @@ def section(title: str) -> None:
 
 def main() -> int:
     print("=" * 54)
-    print("  验收：Day 1-3 接口闭环 + Day 4 Web UI 执行 + Day 5 测试计划")
+    print("  验收：Day 1-3 接口闭环 + Day 4 Web UI 执行 + Day 5 测试计划 + 缺陷管理")
     print("=" * 54)
 
     # ==================== Day 1 ====================
@@ -827,6 +827,92 @@ def main() -> int:
     check("用例被删后，计划里的关联自动清掉（外键级联）",
           len(r.json()["cases"]) == len(plan_case_ids),
           f"剩 {len(r.json()['cases'])} 条")
+
+    # ==================== 缺陷管理 ====================
+    section("缺陷管理 · 一键转入与状态流转")
+
+    # 先造一条注定失败的执行：断言 500 响应等于 200
+    r = requests.post(f"{BASE}/projects/{pid}/cases", json={
+        "name": "验收·注定失败用例", "type": "api",
+        "method": "GET", "url": "https://httpbin.org/status/500",
+        "assertions_json": [
+            {"assertion_type": "status_code", "operator": "eq", "expected_value": "200", "target": ""},
+        ],
+    }, timeout=10)
+    fail_case_id = r.json().get("id")
+    r = requests.post(f"{BASE}/cases/{fail_case_id}/run", json={"timeout": 30}, timeout=60)
+    fail_execution = r.json() if r.status_code == 200 else {}
+    check("造出一条失败的执行记录", fail_execution.get("status") == "fail",
+          str(fail_execution.get("status")))
+    fail_exec_id = fail_execution.get("id")
+
+    r = requests.post(f"{BASE}/executions/{fail_exec_id}/defect", json={}, timeout=10)
+    check("从失败的执行一键提缺陷", r.status_code == 201, r.text[:120])
+    defect = r.json() if r.status_code == 201 else {}
+    defect_id = defect.get("id")
+    check("标题按用例名自动生成", defect.get("title") == "[fail] 验收·注定失败用例",
+          str(defect.get("title")))
+    check("描述带执行上下文与未通过断言",
+          "来源执行记录" in defect.get("description", "")
+          and "未通过的断言" in defect.get("description", ""))
+    check("自动关联执行与用例",
+          defect.get("execution_id") == fail_exec_id and defect.get("case_id") == fail_case_id)
+    check("默认状态新建 / 严重程度一般 / 优先级 P1",
+          defect.get("status") == "新建" and defect.get("severity") == "一般"
+          and defect.get("priority") == "P1")
+    check("详情回填用例名", defect.get("case_name") == "验收·注定失败用例",
+          str(defect.get("case_name")))
+
+    r = requests.post(f"{BASE}/executions/{fail_exec_id}/defect", json={}, timeout=10)
+    check("同一执行重复提缺陷返回 409", r.status_code == 409)
+    conflict = r.json().get("detail") if r.status_code == 409 else {}
+    check("409 带上已有缺陷 id（前端据此跳转）",
+          isinstance(conflict, dict) and conflict.get("defect_id") == defect_id, str(conflict))
+
+    r = requests.post(f"{BASE}/executions/{execution_id}/defect", json={}, timeout=10)
+    check("通过的执行记录拒绝提缺陷（400）", r.status_code == 400, r.text[:80])
+
+    r = requests.get(f"{BASE}/projects/{pid}/defects", timeout=10)
+    check("缺陷列表", r.status_code == 200 and any(d["id"] == defect_id for d in r.json()))
+    row = next((d for d in r.json() if d["id"] == defect_id), {})
+    check("列表带关联用例名", row.get("case_name") == "验收·注定失败用例", str(row.get("case_name")))
+
+    r = requests.get(f"{BASE}/projects/{pid}/defects", params={"status": "新建"}, timeout=10)
+    check("按状态筛选", r.status_code == 200 and all(d["status"] == "新建" for d in r.json()))
+    r = requests.get(f"{BASE}/projects/{pid}/defects", params={"keyword": "注定失败"}, timeout=10)
+    check("按标题关键字筛选", r.status_code == 200 and len(r.json()) == 1, f"{len(r.json())} 条")
+    r = requests.get(f"{BASE}/projects/{pid}/defects", params={"severity": "致命"}, timeout=10)
+    check("按严重程度筛选排除不匹配", r.status_code == 200 and len(r.json()) == 0)
+
+    r = requests.put(f"{BASE}/defects/{defect_id}",
+                     json={"status": "处理中", "severity": "严重"}, timeout=10)
+    check("更新缺陷（状态流转 + 严重程度）",
+          r.status_code == 200 and r.json()["status"] == "处理中"
+          and r.json()["severity"] == "严重")
+
+    r = requests.put(f"{BASE}/defects/{defect_id}", json={"status": "瞎写的状态"}, timeout=10)
+    check("非法状态值返回 422", r.status_code == 422)
+    r = requests.post(f"{BASE}/projects/{pid}/defects", json={"title": ""}, timeout=10)
+    check("空标题返回 422", r.status_code == 422)
+
+    r = requests.post(f"{BASE}/projects/{pid}/defects", json={
+        "title": "手工缺陷", "description": "不关联执行", "severity": "轻微", "priority": "P3",
+    }, timeout=10)
+    check("手工新建缺陷（不关联执行）",
+          r.status_code == 201 and r.json().get("execution_id") is None)
+
+    r = requests.post(f"{BASE}/executions/999999/defect", json={}, timeout=10)
+    check("不存在的执行提缺陷返回 404", r.status_code == 404)
+    r = requests.get(f"{BASE}/defects/999999", timeout=10)
+    check("不存在的缺陷返回 404", r.status_code == 404)
+
+    # 用例被删后缺陷仍在，只有 case_id 被外键置空（SET NULL）——执行记录也还在
+    requests.delete(f"{BASE}/cases/{fail_case_id}", timeout=10)
+    r = requests.get(f"{BASE}/defects/{defect_id}", timeout=10)
+    check("用例被删后缺陷保留，case_id 置空（外键 SET NULL）",
+          r.status_code == 200 and r.json()["case_id"] is None
+          and r.json()["execution_id"] == fail_exec_id,
+          f"case_id={r.json().get('case_id')}")
 
     # ==================== 清理 ====================
     section("清理验收数据")

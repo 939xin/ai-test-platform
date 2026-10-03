@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   CircleCheck,
   DataLine,
@@ -14,6 +15,9 @@ import ExecutionResult from '@/components/ExecutionResult.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { listProjects } from '@/api/project'
 import { getExecution, listExecutions } from '@/api/execution'
+
+const route = useRoute()
+const router = useRouter()
 
 const projects = ref([])
 const currentProjectId = ref(null)
@@ -72,15 +76,40 @@ async function loadExecutions() {
   }
 }
 
-async function openDetail(row) {
+async function openDetailById(executionId) {
   detailVisible.value = true
   detail.value = null
   detailLoading.value = true
   try {
-    detail.value = await getExecution(row.id)
+    detail.value = await getExecution(executionId)
   } finally {
     detailLoading.value = false
   }
+}
+
+function openDetail(row) {
+  return openDetailById(row.id)
+}
+
+/** 在缺陷详情里点「查看执行」会跳过来，带 ?open=<execution_id>，直接打开那次执行。 */
+function openFromQuery() {
+  const openId = Number(route.query.open)
+  if (!openId) return
+  openDetailById(openId)
+
+  // 清掉 open，免得关掉抽屉后一刷新又弹出来
+  const query = {}
+  if (currentProjectId.value != null) query.project = String(currentProjectId.value)
+  router.replace({ query })
+}
+
+/** 提完缺陷跳到缺陷页并打开那条缺陷；项目 id 一起带过去，那边才知道查哪个项目。 */
+function gotoDefect(defectId) {
+  detailVisible.value = false
+  router.push({
+    name: 'defects',
+    query: { open: defectId, project: detail.value?.project_id ?? currentProjectId.value },
+  })
 }
 
 watch(currentProjectId, loadExecutions)
@@ -88,6 +117,7 @@ watch(currentProjectId, loadExecutions)
 onMounted(async () => {
   await loadProjects()
   await loadExecutions()
+  openFromQuery()
 })
 </script>
 
@@ -206,7 +236,7 @@ onMounted(async () => {
             <span class="detail-title">{{ detail.case_name || '已删除用例' }}</span>
             <span class="mono detail-time">{{ formatTime(detail.created_at) }}</span>
           </div>
-          <ExecutionResult :execution="detail" />
+          <ExecutionResult :execution="detail" @goto-defect="gotoDefect" />
         </template>
       </div>
     </el-drawer>
