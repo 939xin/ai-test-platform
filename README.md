@@ -51,7 +51,7 @@
 
 **关于 `services/` 层**：执行引擎的断言逻辑、变量解析、请求构造、Selenium 步骤执行等，
 复用自既有的桌面版实现，剥离了原桌面框架的线程外壳后改为无状态服务，供 FastAPI 直接调用。
-整套引擎现在由 `backend/scripts/verify_all.py` 的 148 项验收覆盖。
+整套引擎现在由 `backend/scripts/verify_all.py` 的 164 项验收覆盖。
 
 ---
 
@@ -125,6 +125,7 @@ npm run dev
 │       │   ├── ApiCaseForm.vue       # 接口用例表单区（请求/断言/提取）
 │       │   ├── WebCaseForm.vue       # UI 用例表单区
 │       │   ├── WebStepEditor.vue     # 步骤编排器（31 种操作）
+│       │   ├── PagePagination.vue    # 统一分页条（6 个列表页共用）
 │       │   └── ...                   # PageHeader / StatusTag / 各编辑抽屉与弹窗
 │       ├── views/              # 页面
 │       │   ├── LoginView.vue         # 登录页（在 AppLayout 之外，独立全屏）
@@ -156,7 +157,7 @@ npm run dev
 
 ## 开发状态
 
-> 更新时间：2026-10-03（Day 8）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
+> 更新时间：2026-10-03（Day 9）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
 
 | 模块 | 状态 |
 |---|---|
@@ -169,13 +170,13 @@ npm run dev
 | 缺陷管理 | ✅ 完成（含失败记录一键转缺陷） |
 | AI 辅助（用例生成 / 失败分析） | 📋 占位页（`.env` 里 key 是空占位） |
 | 设置 | 📋 占位页 |
-| 列表分页 | 📋 未做（接口一次性返回全部） |
+| 列表分页 | ✅ 完成（6 个列表接口返回 `{ items, total }`；项目 / 环境 / 数据集保持裸数组 —— 它们是下拉数据源） |
 | Docker 部署（含前后端） | 📋 仅数据库跑了 compose |
 
 ### 验收
 
 ```bash
-cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 148 项，需后端已启动
+cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 164 项，需后端已启动
 ```
 
 前端改动后建议用浏览器过一遍 13 条业务路由（外加登录页），确认无 console 报错与失败请求。
