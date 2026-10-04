@@ -19,7 +19,7 @@
 | 数据库 | MySQL 8（Docker） |
 | 接口测试 | requests + jsonpath-ng |
 | Web UI 测试 | Selenium WebDriver |
-| AI 辅助 | DeepSeek API（📋 尚未接入） |
+| AI 辅助 | DeepSeek API（需在 `backend/.env` 配 key） |
 | 部署 | Docker Compose（目前只有数据库在用） |
 
 ---
