@@ -48,7 +48,7 @@
 
 **关于 `services/` 层**：执行引擎的断言逻辑、变量解析、请求构造、Selenium 步骤执行等，
 复用自既有的桌面版实现，剥离了原桌面框架的线程外壳后改为无状态服务，供 FastAPI 直接调用。
-整套引擎现在由 `backend/scripts/verify_all.py` 的 164 项验收覆盖。
+整套引擎现在由 `backend/scripts/verify_all.py` 的 203 项验收覆盖。
 
 ---
 
@@ -163,7 +163,7 @@ npm run dev
 
 ## 开发状态
 
-> 更新时间：2026-10-04（Day 11）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
+> 更新时间：2026-10-05（Day 12）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
 
 | 模块 | 状态 |
 |---|---|
@@ -176,13 +176,14 @@ npm run dev
 | 缺陷管理 | ✅ 完成（含失败记录一键转缺陷） |
 | AI 辅助（用例生成 / 失败分析） | ✅ 完成（DeepSeek；AI 助手页 + 用例编辑页生成 + 执行详情分析失败，每次调用落 `ai_task`。需在 `backend/.env` 配 `DEEPSEEK_API_KEY`） |
 | 设置 | ✅ 完成（修改密码 / 浏览器驱动检测 / 本机运行参数只读展示） |
+| Web 登录态复用 | ✅ 完成（登录用例导出 cookie + localStorage；「需要登录态」的用例注入后再跑，每条用例仍各起各的浏览器） |
 | 列表分页 | ✅ 完成（6 个列表接口返回 `{ items, total }`；项目 / 环境 / 数据集保持裸数组 —— 它们是下拉数据源） |
 | Docker 部署（含前后端） | 📋 仅数据库跑了 compose |
 
 ### 验收
 
 ```bash
-cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 184 项，需后端已启动
+cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 203 项，需后端已启动
 ```
 
 前端改动后建议用浏览器过一遍 13 条业务路由（外加登录页），确认无 console 报错与失败请求。

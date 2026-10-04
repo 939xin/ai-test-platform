@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 说明 | 状态 |
 |---|---|---|
-| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–11） |
+| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–12） |
 | `app/` + `main.py` 等 | **旧** PySide6 桌面版 | 冻结，作为引擎复用源 |
 
 新工程的执行引擎（`backend/app/services/`）大量复用旧桌面版 `app/engine`、`app/utils`
@@ -179,6 +179,51 @@ DeepSeek 接入，两个端点：`POST /api/ai/generate-cases`、`POST /api/ai/a
   别为了显示版本号在这里启动浏览器 —— 这一页会立刻变得需要等几十秒
 - `verify_all.py` 里验改密码**用临时用户 `verify_tmp_user`，跑完删掉**，
   绝不拿 admin 试：脚本中途挂掉会把人锁在门外（文档里到处写着 `admin123`）
+
+### Web 登录态复用（Day 12 起）
+
+「登录一次、后面每条用例都不用再登」—— 登录用例导出浏览器状态，「需要登录态」的
+用例注入后执行。两个端点：`GET` / `DELETE /api/projects/{id}/web-session`。
+
+> ⚠️ **隔离模型没有被改动**：每条用例照旧各起各的浏览器、各关各的 `${driver.quit()}`。
+> 共享的只是**状态数据**，不是浏览器。别顺手"优化"成共用一个 driver。
+
+- 用例上的两个标记：`login_case`（执行通过后导出状态）、`needs_login`（执行前注入）
+- **注入顺序是硬性的，不能调换**：`driver.get(origin)` 当跳板 → `add_cookie` →
+  JS 写两个 storage → 才轮到用例自己的第一步。浏览器只允许在**目标域**上写 cookie
+  与 storage，在空白页或别的域上 `add_cookie` 会被**静默丢弃** —— 不抛异常、也不生效，
+  是最难查的那类失败
+- ⚠️ **两个 Selenium 的坑，实测复现过才写的清洗逻辑**（`_clean_cookie`）：
+  `sameSite` 只认 `Strict/Lax/None`，Chrome 会给 `'unspecified'`，而 Selenium
+  用的是 **assert** 而不是返回错误 → 直接 `AssertionError`；
+  `expiry` 必须是**整数秒**，浮点会被拒（`invalid argument: invalid 'expiry'`）
+- **只在登录用例整条通过时才导出** —— 跑挂的登录用例存下来的是半登录的残次品，
+  留给别人用只会制造更难查的失败
+- 降级口径：标了「需要登录态」但没有可用状态时**照常执行**，只在结果里标
+  `session.missing` 并在界面提示。**不静默跳过、也不直接报错**
+- 单条执行（`api/executions.py`）与计划批量（`api/plans.py`）**共用**
+  `web_session.prepare_for_case()` / `finish_case()` —— 两条路径各写一份，
+  早晚出现"一边记了 missing、另一边没记"
+- 导出的原始状态走 `result["_captured_session"]` 返回，**落库前必须 pop 掉**：
+  那里面是等价于会话令牌的东西，混进 `execution.result_json` 会永久留在执行历史里。
+  接口摘要同理，**只回 storage 的 key、不回 value**
+- 靶页是 `static/demo/login-state.html`（登录并写三个通道）与 `protected.html`
+  （无登录表单，只看有没有带过来的状态）。**别改 `index.html`** —— Day 4 那 44 项
+  断言依赖它现有的 DOM
+
+**能力边界（不要过度承诺）**：
+- **登录态是否过期，程序无法可靠判定。** cookie 的到期时间读得到（`expires_at`），
+  但 localStorage 里的 JWT 何时失效前端不暴露任何信号，而且"被重定向到登录页"
+  各家站点表现都不同。目前只做到「cookie 到期就在界面上提醒一句」，
+  **不参与任何执行决策**
+- 跨域注入天然无效：用例第一步若跳到别的域名，注入一定不生效 —— 这是浏览器的
+  同源规则，不是 bug，界面上已写明
+- ⚠️ **库里存的 cookie 等价于会话令牌，是明文。测试工具场景可接受，
+  生产环境必须加密**（至少整表加密或改用 KMS 托管）
+
+**改 test_case 表结构前先看这里**：`create_all` **只建表、不给已有表加列**。
+往已有表加字段要把 DDL 登记到 `database._ADDED_COLUMNS`，由 `ensure_schema()`
+在启动时幂等补齐。这仍是过渡手段，表结构再稳定些应整体换成 Alembic。
 
 ### 前端规范（用户明确要求，必须遵守）
 
@@ -410,6 +455,8 @@ UI 层 (PySide6)          用户操作 → 写 DB
 9. 📝 **窄视口表格横向溢出** —— 操作列已 `fixed="right"` 保证可点，整体仍需横向滚动
 10. 📝 **pytest 脚本导出未搬** —— 旧桌面版 `script_generator.py` 新平台 0 处引用
 11. 📝 **定时执行** —— 独立工程，需常驻调度器
+12. 📝 **登录态过期无法自动判定** —— Day 12 引入的能力边界，只能靠 cookie 到期时间
+    提醒，**不假装能自动检测**。做法与理由见上文「Web 登录态复用」一节
 
 ### 已完成，别当待办
 
@@ -417,8 +464,12 @@ Web UI 执行已迁移（Day 4）、`_capture_screenshot()` 老 bug 已修（Day
 测试计划已实现（Day 5）、场景混入 Web 用例已修（Day 6）、缺陷管理已实现（Day 7）、
 **全站 JWT 校验 + 登录页**已实现（Day 8）、**列表分页 + 执行统计接口**已实现（Day 9）、
 **AI 辅助（用例生成 / 失败分析）**已实现（Day 10，见上文「AI 辅助」一节）、
-**设置页**已实现（Day 11，见上文「设置页」一节）——
+**设置页**已实现（Day 11，见上文「设置页」一节）、
+**Web 登录态复用**已实现（Day 12，见上文「Web 登录态复用」一节）——
 **侧栏 11 个页面至此全部有实际内容，占位页清零**。
+Day 12 顺手修掉 `${base_url}` 变量注入：`open_url` 与 `ApiCaseForm` 的字段提示
+都写着「支持 `${base_url}`」，但两边都只注入了 `variables_json`。
+**接口侧同样存在这个问题，Day 12 未修**（用户划的范围是「不动接口测试」）。
 Day 9 另外修掉三个静默缺陷：计划编辑器保存会丢用例、报告文件名同一秒互相覆盖、
 列表页挂载时重复请求一次。
 

@@ -169,6 +169,41 @@
       `verify_tmp_user` 验、`finally` 里删掉，**绝不动 admin 的密码** ——
       万一中途异常退出，admin 被改了密码而文档里到处写着 admin123，等于把人锁在门外
 
+### Day 12 · Web 登录态复用
+- [x] 新增 `web_session` 表（第 12 张表）与用例上的 `login_case` / `needs_login` 两个标记。
+      模型里给 `test_case` 加了列 —— 而 **`create_all` 只建表、不给已有表加列**，
+      所以 `database.ensure_schema()` 补了一层**幂等的列检查**（查 information_schema，
+      缺了才 ALTER）。以后往已有表加字段，把 DDL 登记到 `_ADDED_COLUMNS` 即可
+- [x] `services/web_session.py`：`capture_state()` / `apply_state()`，把
+      cookie + localStorage + sessionStorage 整体导出、注入
+- [x] `services/web_executor.execute_case()` 新增 `session_state` / `capture_session`
+      两个入参。**隔离模型一行没动** —— 每条用例照旧各起各的浏览器、各关各的，
+      共享的只是状态数据
+- [x] 注入顺序是**硬性**的：先 `driver.get(origin)` 当跳板 → `add_cookie` →
+      JS 写两个 storage → 才轮到用例自己的第一步。浏览器只允许在目标域上写
+      cookie 与 storage，在空白页上 `add_cookie` 会被**静默丢弃**（不抛异常也不生效）
+- [x] 两处 Selenium 的坑，实测复现过才写的清洗逻辑：
+      `sameSite` 只认 `Strict/Lax/None`（Chrome 会给 `unspecified`，Selenium 用
+      **assert** 而非返回错误 → 直接 `AssertionError`）；`expiry` 必须是整数秒
+      （浮点会被拒：`invalid argument: invalid 'expiry'`）
+- [x] **只在登录用例整条通过时才导出** —— 跑挂了的登录用例存下来的是半登录的
+      残次品，留给别的用例用只会制造更难查的失败
+- [x] 降级口径：标了「需要登录态」但库里没有状态时，**照常执行**并在结果里标
+      `session.missing`，界面明确提示「先把登录用例跑一次」，而不是静默跳过或报错
+- [x] 单条执行与计划批量**共用** `prepare_for_case()` / `finish_case()`，
+      免得两条路径各写一份、日后口径漂移
+- [x] `GET` / `DELETE /api/projects/{id}/web-session`。没有登录态时返回 **null
+      而不是 404** —— 「新项目还没登录过」是正常状态，不是错误。摘要**只回
+      storage 的 key、不回 value**（那些 value 就是令牌），执行记录里也不落明文
+- [x] 顺手修掉 `${base_url}` 变量注入：`open_url` 的字段提示写着「可含 `${变量}`，
+      如 `${base_url}/login`」，但此前只注入了 `variables_json`，那句话根本兑不了现 ——
+      占位符不被替换，浏览器会去访问字面量 `"${base_url}/login"`
+- [x] 新增两个离线靶页 `login-state.html` / `protected.html`。**没有动
+      `index.html`** —— Day 4 那 44 项断言依赖它现有的 DOM
+- [x] `verify_all.py` 新增 19 项（184 → 203）。其中两条是骨架：
+      「没有登录态时失败**且原因说清是未登录**」（保证失败可诊断）与
+      「**清掉登录态后同一条用例又跑不通**」（反证，证明状态真在被使用）
+
 ### 验收规模
 
 | 阶段 | 验收项数 |
@@ -182,7 +217,8 @@
 | Day 8 | 148 |
 | Day 9 | 164 |
 | Day 10 | 171 |
-| Day 11 | **184（全过）** |
+| Day 11 | 184 |
+| Day 12 | **203（全过）** |
 
 ### 已知未做（v2.0.0 范围内）
 
@@ -274,6 +310,11 @@
     不依赖 key 是否可用
 12. [ ] **定时执行** —— 独立工程：需引入常驻调度器
     （`test_plan.schedule` 字段已在 Day 5 删除）
+13. [ ] **登录态过期无法自动判定**（Day 12 引入的能力边界）—— 现在只知道
+    cookie 的到期时间，`localStorage` 里 JWT 何时失效**前端不暴露任何信号**；
+    「被重定向到登录页」各家站点表现也不同。所以目前只做到「cookie 到期就在界面上
+    提醒一句」，**不会假装能自动检测过期**。真要根治得让用户能配一条「校验登录态」
+    的探测用例（可复用「需要登录态」那套注入逻辑，跑一条轻量断言来判定）
 
 ### 桌面版有、新平台没搬（Day 8 逐模块比对发现）
 
