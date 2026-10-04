@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.api import (
     ai, auth, cases, datasets, defects, environments, executions, health, plans, projects, reports,
-    scenarios, web,
+    scenarios, system, web,
 )
 from app.api.deps import get_current_user
 from app.config import settings
@@ -38,7 +38,9 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="AI 辅助软件测试平台", version="0.1.0", lifespan=lifespan)
+# version 会被「设置」页的只读面板读出来展示（GET /system/info），
+# 所以这里要与 time/CHANGELOG.md 的版本号保持一致，别让它俩漂移。
+app = FastAPI(title="AI 辅助软件测试平台", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,6 +74,7 @@ app.include_router(datasets.router, prefix="/api", tags=["datasets"], dependenci
 app.include_router(defects.router, prefix="/api", tags=["defects"], dependencies=guard)
 app.include_router(web.router, prefix="/api", tags=["web"], dependencies=guard)
 app.include_router(ai.router, prefix="/api", tags=["ai"], dependencies=guard)
+app.include_router(system.router, prefix="/api", tags=["system"], dependencies=guard)
 
 # Web UI 测试的离线演示页。挂在 /api 之下，前端 vite proxy 和验收脚本的 BASE
 # 都不需要额外配置；StaticFiles 自带路径穿越防护，且演示页只读。

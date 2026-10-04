@@ -161,7 +161,7 @@ npm run dev
 
 ## 开发状态
 
-> 更新时间：2026-10-04（Day 10）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
+> 更新时间：2026-10-04（Day 11）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
 
 | 模块 | 状态 |
 |---|---|
@@ -173,14 +173,14 @@ npm run dev
 | 执行中心 / 测试报告 / 测试计划 | ✅ 完成 |
 | 缺陷管理 | ✅ 完成（含失败记录一键转缺陷） |
 | AI 辅助（用例生成 / 失败分析） | ✅ 完成（DeepSeek；AI 助手页 + 用例编辑页生成 + 执行详情分析失败，每次调用落 `ai_task`。需在 `backend/.env` 配 `DEEPSEEK_API_KEY`） |
-| 设置 | 📋 占位页 |
+| 设置 | ✅ 完成（修改密码 / 浏览器驱动检测 / 本机运行参数只读展示） |
 | 列表分页 | ✅ 完成（6 个列表接口返回 `{ items, total }`；项目 / 环境 / 数据集保持裸数组 —— 它们是下拉数据源） |
 | Docker 部署（含前后端） | 📋 仅数据库跑了 compose |
 
 ### 验收
 
 ```bash
-cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 171 项，需后端已启动
+cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 184 项，需后端已启动
 ```
 
 前端改动后建议用浏览器过一遍 13 条业务路由（外加登录页），确认无 console 报错与失败请求。

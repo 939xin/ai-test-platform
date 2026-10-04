@@ -1,4 +1,4 @@
-"""一键验收 — 覆盖 Day 1 ~ Day 10 的全部后端能力。
+"""一键验收 — 覆盖 Day 1 ~ Day 11 的全部后端能力。
 
 用法（在 backend/ 目录下，需后端已启动）：
     venv/Scripts/python.exe scripts/verify_all.py
@@ -8,6 +8,7 @@ Day 1-3 段需要外网（httpbin.org）；Day 4 起用后端自带的离线演�
 AI 那一段完全离线：把 ai_client 里的 httpx.post 换掉，不真的调 DeepSeek。
 """
 import io
+import json
 import shutil
 import sys
 import tempfile
@@ -132,7 +133,7 @@ def section(title: str) -> None:
 
 def main() -> int:
     print("=" * 54)
-    print("  验收：Day 1-3 接口闭环 + Day 4 Web UI + Day 5 计划 + 缺陷 + 分页 + AI 辅助")
+    print("  验收：Day 1-3 闭环 + Web UI + 计划 + 缺陷 + 分页 + AI 辅助 + 设置")
     print("=" * 54)
 
     # ==================== Day 1 ====================
@@ -1130,6 +1131,82 @@ def main() -> int:
     check("AI 两个路由已注册", ai_expected <= registered,
           f"缺失 {sorted(ai_expected - registered)}" if not ai_expected <= registered
           else f"共 {len(registered)} 条路径")
+
+    # ==================== 设置 ====================
+    section("设置 · 系统信息与改密码")
+    from app.api.auth import hash_password
+    from app.database import SessionLocal
+    from app.models import User
+
+    info = SESSION.get(f"{BASE}/system/info", timeout=20)
+    body = info.json()
+    dump = json.dumps(body, ensure_ascii=False)
+    check("带 token 可读系统信息", info.status_code == 200, f"status={info.status_code}")
+    # 下面两条是**安全**断言，不是格式断言：/system/info 的每个字段都会被渲染到
+    # 设置页上（还进浏览器历史、进截图），漏一个就是明文泄漏
+    check("系统信息里不含数据库密码明文", "test123456" not in dump)
+    check("系统信息里不含 AI Key", "sk-" not in dump)
+    check("系统信息报告数据库连通", body.get("database_ok") is True,
+          f"database={body.get('database')} version={body.get('version')}")
+    check("无 token 读系统信息 → 401",
+          requests.get(f"{BASE}/system/info", timeout=10).status_code == 401)
+
+    # ⚠️ 改密码是**写操作**，绝不能拿 admin 试：万一中途异常退出，admin 的密码
+    # 就被改成别的东西，而文档里到处写着 admin123 —— 这一跑等于把人锁在门外。
+    # 所以临时建一个用户来验，无论成败都在 finally 里删掉。
+    check("无 token 改密码 → 401（它所在的 router 本身是豁免守卫的）",
+          requests.post(f"{BASE}/auth/password",
+                        json={"old_password": "admin123", "new_password": "whatever123"},
+                        timeout=10).status_code == 401)
+    check("原密码错误 → 400",
+          SESSION.post(f"{BASE}/auth/password",
+                       json={"old_password": "definitely-wrong", "new_password": "whatever123"},
+                       timeout=10).status_code == 400)
+    check("新旧密码相同 → 400",
+          SESSION.post(f"{BASE}/auth/password",
+                       json={"old_password": "admin123", "new_password": "admin123"},
+                       timeout=10).status_code == 400)
+    check("新密码短于 6 位 → 422",
+          SESSION.post(f"{BASE}/auth/password",
+                       json={"old_password": "admin123", "new_password": "123"},
+                       timeout=10).status_code == 422)
+
+    tmp_user = "verify_tmp_user"
+    db = SessionLocal()
+    try:
+        stale = db.query(User).filter(User.username == tmp_user).one_or_none()
+        if stale:
+            db.delete(stale)
+            db.commit()
+        db.add(User(username=tmp_user, password_hash=hash_password("tmp-pass-111"), role="tester"))
+        db.commit()
+
+        tmp = requests.Session()
+        login_old = tmp.post(f"{BASE}/auth/login",
+                             json={"username": tmp_user, "password": "tmp-pass-111"}, timeout=10)
+        tmp.headers["Authorization"] = f"Bearer {login_old.json()['access_token']}"
+        changed = tmp.post(f"{BASE}/auth/password",
+                           json={"old_password": "tmp-pass-111", "new_password": "tmp-pass-222"},
+                           timeout=10)
+        check("改密码成功返回 204", changed.status_code == 204, f"status={changed.status_code}")
+        check("新密码立即可登录",
+              requests.post(f"{BASE}/auth/login",
+                            json={"username": tmp_user, "password": "tmp-pass-222"},
+                            timeout=10).status_code == 200)
+        check("旧密码随即失效",
+              requests.post(f"{BASE}/auth/login",
+                            json={"username": tmp_user, "password": "tmp-pass-111"},
+                            timeout=10).status_code == 401)
+        check("admin 的密码没被这一轮碰过",
+              requests.post(f"{BASE}/auth/login",
+                            json={"username": "admin", "password": "admin123"},
+                            timeout=10).status_code == 200)
+    finally:
+        row = db.query(User).filter(User.username == tmp_user).one_or_none()
+        if row:
+            db.delete(row)
+            db.commit()
+        db.close()
 
     # ==================== 清理 ====================
     section("清理验收数据")

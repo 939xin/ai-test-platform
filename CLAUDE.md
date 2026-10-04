@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 说明 | 状态 |
 |---|---|---|
-| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–10） |
+| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–11） |
 | `app/` + `main.py` 等 | **旧** PySide6 桌面版 | 冻结，作为引擎复用源 |
 
 新工程的执行引擎（`backend/app/services/`）大量复用旧桌面版 `app/engine`、`app/utils`
@@ -157,6 +157,28 @@ DeepSeek 接入，两个端点：`POST /api/ai/generate-cases`、`POST /api/ai/a
 **已知技术债**：`views/AIAssistant.vue` 里内联了一份生成 / 分析弹窗，
 与 `components/AiGenerateDialog.vue`、`AiAnalysisDialog.vue` 重复。
 用户选择维持现状（不改已验收的页面），后续可重构合并。
+
+### 设置页（Day 11 起）
+
+三块：账号（改密码）/ 浏览器驱动检测 / 系统参数只读展示。两个端点：
+`POST /api/auth/password`、`GET /api/system/info`。
+
+> ⚠️ **往 `auth.router` 里加路由，必须自己声明 `Depends(get_current_user)`** ——
+> 这个 router 在 `main.py` 里是**没挂 `guard`** 的（它对全站豁免，因为 `/login`
+> 必须免登录）。往里加东西默认就是裸奔的。验收里有无 token → 401 的断言钉着这条。
+
+- `GET /system/info` **刻意合并成一个接口**：版本 / 用户 / 数据库 / 目录 / 驱动 /
+  AI 配置状态都是「本机当前状态」，拆开请求会出现互相矛盾的组合
+- **回显前先脱敏**：数据库地址只回 scheme / host / port / 库名 / 用户，**不回密码**；
+  AI 只回「配没配」的布尔值，**不回 key**。这些字段都会渲染到页面上
+  （还进浏览器历史与截图），验收里有两条断言扫 `test123456` 与 `sk-`
+- **版本号的唯一来源是 `main.py` 的 `app.version`**（当前 `2.0.0`），
+  设置页读它，不在前端再写一份
+- 驱动检测走 `check_browser()` 的**廉价探测**：只看浏览器装没装、驱动缓存目录能不能写，
+  **不启动浏览器也不下载驱动**。代价是**拿不到版本号**，页面显示可执行文件路径。
+  别为了显示版本号在这里启动浏览器 —— 这一页会立刻变得需要等几十秒
+- `verify_all.py` 里验改密码**用临时用户 `verify_tmp_user`，跑完删掉**，
+  绝不拿 admin 试：脚本中途挂掉会把人锁在门外（文档里到处写着 `admin123`）
 
 ### 前端规范（用户明确要求，必须遵守）
 
@@ -378,7 +400,7 @@ UI 层 (PySide6)          用户操作 → 写 DB
 
 1. ✅ **列表分页** —— 已完成（Day 9）。6 个会长的接口改 `{ items, total }`，
    项目 / 环境 / 数据集保持裸数组。契约见上文「列表分页」一节
-2. 📝 **设置页** —— 仍是 11 行占位，是唯一剩下的占位页。纯前端，不依赖外部服务
+2. ✅ **设置页** —— 已完成（Day 11）。账号 / 驱动检测 / 系统参数，见上文「设置页」一节
 3. 📝 **无 Setup / Teardown**（前置 + 后置步骤）—— 全后端无实现
 4. 📝 **缺陷无附件 / 评论 / 指派** —— ⚠️ 表里没有这些字段，**要先改表**
 5. 📝 **无用例导入 / 导出**（JSON / Excel）
@@ -394,7 +416,9 @@ UI 层 (PySide6)          用户操作 → 写 DB
 Web UI 执行已迁移（Day 4）、`_capture_screenshot()` 老 bug 已修（Day 4）、
 测试计划已实现（Day 5）、场景混入 Web 用例已修（Day 6）、缺陷管理已实现（Day 7）、
 **全站 JWT 校验 + 登录页**已实现（Day 8）、**列表分页 + 执行统计接口**已实现（Day 9）、
-**AI 辅助（用例生成 / 失败分析）**已实现（Day 10，见上文「AI 辅助」一节）。
+**AI 辅助（用例生成 / 失败分析）**已实现（Day 10，见上文「AI 辅助」一节）、
+**设置页**已实现（Day 11，见上文「设置页」一节）——
+**侧栏 11 个页面至此全部有实际内容，占位页清零**。
 Day 9 另外修掉三个静默缺陷：计划编辑器保存会丢用例、报告文件名同一秒互相覆盖、
 列表页挂载时重复请求一次。
 
