@@ -106,6 +106,11 @@ npm run dev
 
 ---
 
+> 📦 **旧版桌面代码归档** —— 根目录下的 `app/`、`main.py`、`build.spec`、
+> `接口自动化测试工具.spec`、`requirements.txt` 是**早期 PySide6 桌面版的源码归档**。
+> Web 平台的执行引擎（断言、变量解析、Selenium 步骤执行）复用自该版本，
+> **目前维护重心已完全转移至 `backend/` 与 `frontend/`。**
+
 ## 项目结构
 
 ```
