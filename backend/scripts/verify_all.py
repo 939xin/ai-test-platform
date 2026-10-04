@@ -1,10 +1,11 @@
-"""一键验收 — 覆盖 Day 1 ~ Day 6 的全部后端能力。
+"""一键验收 — 覆盖 Day 1 ~ Day 10 的全部后端能力。
 
 用法（在 backend/ 目录下，需后端已启动）：
     venv/Scripts/python.exe scripts/verify_all.py
 
 每个开发阶段结束后跑一次，确认没有回归。
 Day 1-3 段需要外网（httpbin.org）；Day 4 起用后端自带的离线演示页，不依赖外网。
+AI 那一段完全离线：把 ai_client 里的 httpx.post 换掉，不真的调 DeepSeek。
 """
 import io
 import shutil
@@ -131,7 +132,7 @@ def section(title: str) -> None:
 
 def main() -> int:
     print("=" * 54)
-    print("  验收：Day 1-3 接口闭环 + Day 4 Web UI 执行 + Day 5 测试计划 + 缺陷管理")
+    print("  验收：Day 1-3 接口闭环 + Day 4 Web UI + Day 5 计划 + 缺陷 + 分页 + AI 辅助")
     print("=" * 54)
 
     # ==================== Day 1 ====================
@@ -1032,6 +1033,103 @@ def main() -> int:
         check("环境列表仍是裸数组", isinstance(r.json(), list))
     finally:
         SESSION.delete(f"{BASE}/projects/{page_pid}", timeout=10)
+
+    # ==================== AI 辅助 ====================
+    section("AI 辅助 · 边界（离线，不出网）")
+    # 「没配 key / 模型返回非 JSON / 调用超时」这三种情况没法让真实的 DeepSeek 按需复现，
+    # 所以直接换掉 ai_client 内部的 httpx.post，喂给它对应的返回。
+    # 全程离线：不花钱，也不受外网和模型当时状态的影响。
+    import httpx
+    from unittest.mock import patch
+
+    from app.config import settings as app_settings
+    from app.services import ai_client
+    from app.services.ai_client import AIError, chat_json
+    from app.services.ai_prompts import JSON_RETRY_HINT
+
+    class _FakeResponse:
+        """只实现 ai_client 用到的那三个成员：status_code / text / json()。"""
+
+        def __init__(self, content: str, status_code: int = 200):
+            self.status_code = status_code
+            self.text = content
+            self._content = content
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._content}}]}
+
+    def _call_capture_error() -> Exception | None:
+        try:
+            chat_json("system", "user")
+            return None
+        except Exception as e:  # noqa: BLE001 — 要的就是把它抓到断言里看，不是漏掉
+            return e
+
+    # ① 没配 key：应该在发请求之前就拦下，并给一句照着做就能解决的中文提示
+    original_key = app_settings.deepseek_api_key
+    app_settings.deepseek_api_key = ""
+    try:
+        no_key_error = _call_capture_error()
+    finally:
+        app_settings.deepseek_api_key = original_key
+    check("无 API Key → 400 且提示去 .env 配",
+          isinstance(no_key_error, AIError) and no_key_error.status_code == 400
+          and "DEEPSEEK_API_KEY" in no_key_error.message,
+          getattr(no_key_error, "message", repr(no_key_error)))
+
+    # ② 返回不是 JSON：必须**重新调一次模型**（并在提示词里补一句「只输出 JSON」），
+    #    而不是把同一段文本再解析一遍 —— 后者重试一百次也解析不出来
+    plain_calls: list[dict] = []
+
+    def fake_plain(url, **kwargs):
+        plain_calls.append(kwargs["json"])
+        return _FakeResponse("好的，我这就给你列出来")  # 没有花括号，三层兜底都救不了
+
+    with patch.object(ai_client.httpx, "post", fake_plain):
+        plain_error = _call_capture_error()
+    check("返回非 JSON → 真的重调一次（共 2 次，第二次补了「只输出 JSON」）",
+          len(plain_calls) == 2
+          and JSON_RETRY_HINT in plain_calls[1]["messages"][1]["content"],
+          f"调用 {len(plain_calls)} 次")
+    check("重试后仍非 JSON → 中文错误",
+          isinstance(plain_error, AIError) and "不是合法 JSON" in plain_error.message,
+          getattr(plain_error, "message", repr(plain_error)))
+
+    # ③ 超时：属于「暂时性故障」，应当重试 1 次再放弃
+    timeout_calls: list[int] = []
+
+    def fake_timeout(url, **kwargs):
+        timeout_calls.append(1)
+        raise httpx.TimeoutException("simulated timeout")
+
+    with patch.object(ai_client.httpx, "post", fake_timeout):
+        timeout_error = _call_capture_error()
+    check("调用超时 → 重试 1 次（共 2 次请求）", len(timeout_calls) == 2,
+          f"调用 {len(timeout_calls)} 次")
+    check("超时后 → 中文错误",
+          isinstance(timeout_error, AIError) and "超时" in timeout_error.message,
+          getattr(timeout_error, "message", repr(timeout_error)))
+
+    # ④ 新路由最容易忘的就是在 main.py 挂 dependencies=guard，忘挂就是裸奔。
+    #    这里刻意用「不存在的 project_id / execution_id」：万一守卫真漏了，
+    #    只会走到 404，不会真的发出一次 AI 调用（那是要花钱的）。
+    r_ai1 = requests.post(f"{BASE}/ai/generate-cases",
+                          json={"project_id": 999999, "doc_text": "ping"}, timeout=10)
+    r_ai2 = requests.post(f"{BASE}/ai/analyze-failure",
+                          json={"execution_id": 999999}, timeout=10)
+    check("AI 两个接口都受 JWT 保护（无 token → 401）",
+          r_ai1.status_code == 401 and r_ai2.status_code == 401,
+          f"generate={r_ai1.status_code} analyze={r_ai2.status_code}")
+
+    # ⑤ 路由确实注册上了。这一版 FastAPI 把 include_router 进来的路由包成了
+    #    _IncludedRouter，app.routes 里翻不到它们，只能从 openapi() 的 paths 查。
+    from app.main import app as fastapi_app
+
+    ai_expected = {"/api/ai/generate-cases", "/api/ai/analyze-failure"}
+    registered = set(fastapi_app.openapi()["paths"])
+    check("AI 两个路由已注册", ai_expected <= registered,
+          f"缺失 {sorted(ai_expected - registered)}" if not ai_expected <= registered
+          else f"共 {len(registered)} 条路径")
 
     # ==================== 清理 ====================
     section("清理验收数据")

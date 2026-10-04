@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 说明 | 状态 |
 |---|---|---|
-| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–9） |
+| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–10） |
 | `app/` + `main.py` 等 | **旧** PySide6 桌面版 | 冻结，作为引擎复用源 |
 
 新工程的执行引擎（`backend/app/services/`）大量复用旧桌面版 `app/engine`、`app/utils`
@@ -132,6 +132,31 @@ MySQL 8 (Docker, 3307)
 > 执行中心的统计卡走 `GET /executions/stats`（统计整个项目，与分页无关）。
 > 该路由**必须声明在 `/executions/{execution_id}` 之前**，否则 `stats` 会被当成
 > 执行 id 解析成整数，直接 422 —— FastAPI 按声明顺序匹配。
+
+### AI 辅助（Day 10 起）
+
+DeepSeek 接入，两个端点：`POST /api/ai/generate-cases`、`POST /api/ai/analyze-failure`。
+
+- **超时 60 秒**（整批生成偶尔要几十秒），只对「暂时性故障」重试 1 次：
+  超时 / 429 / 5xx。401 / 402 / 400 是配置问题，重试没有意义
+- **前端 axios 默认 30 秒超时会先把调用掐断** —— `api/ai.js` 里显式放大到 180 秒。
+  再动这两个接口的超时，两边要一起改
+- 返回不是 JSON 时，**重新调一次模型**（提示词补「只输出 JSON」），
+  不是把同一段文本再解析一遍。三层兜底：`json.loads` → 剥围栏 → 正则取最外层括号
+- 提示词是后端常量（`services/ai_prompts.py`）。断言规则**必须把引擎真正实现的那几组
+  列给模型**，否则它会编出引擎跑不通的断言，用户拿到手一跑就报错
+- `ai_task` 表**没有 project_id / case_id**，上下文写进 `input` 的 JSON。每次调用含失败都落一条
+- 执行记录**没有类型字段**，`case_type`（api / web）是接口按 `case_id` 回查填充的。
+  前端靠它把「AI 分析失败」限制在接口执行上（Web 的 `result_json` 里是 steps，
+  没有 request / response，喂给模型只能得到空话）
+
+> ⚠️ 验收时想确认路由注册，**别查 `app.routes`** —— 这一版 FastAPI 把
+> `include_router` 进来的路由包成了 `_IncludedRouter`，那里看不到。
+> 查 `app.openapi()["paths"]`。
+
+**已知技术债**：`views/AIAssistant.vue` 里内联了一份生成 / 分析弹窗，
+与 `components/AiGenerateDialog.vue`、`AiAnalysisDialog.vue` 重复。
+用户选择维持现状（不改已验收的页面），后续可重构合并。
 
 ### 前端规范（用户明确要求，必须遵守）
 
@@ -353,7 +378,7 @@ UI 层 (PySide6)          用户操作 → 写 DB
 
 1. ✅ **列表分页** —— 已完成（Day 9）。6 个会长的接口改 `{ items, total }`，
    项目 / 环境 / 数据集保持裸数组。契约见上文「列表分页」一节
-2. 📝 **设置页** —— 仍是 11 行占位。AI 助手同理（`.env` 里 key 是空占位，做完也无法验证）
+2. 📝 **设置页** —— 仍是 11 行占位，是唯一剩下的占位页。纯前端，不依赖外部服务
 3. 📝 **无 Setup / Teardown**（前置 + 后置步骤）—— 全后端无实现
 4. 📝 **缺陷无附件 / 评论 / 指派** —— ⚠️ 表里没有这些字段，**要先改表**
 5. 📝 **无用例导入 / 导出**（JSON / Excel）
@@ -368,7 +393,8 @@ UI 层 (PySide6)          用户操作 → 写 DB
 
 Web UI 执行已迁移（Day 4）、`_capture_screenshot()` 老 bug 已修（Day 4）、
 测试计划已实现（Day 5）、场景混入 Web 用例已修（Day 6）、缺陷管理已实现（Day 7）、
-**全站 JWT 校验 + 登录页**已实现（Day 8）、**列表分页 + 执行统计接口**已实现（Day 9）。
+**全站 JWT 校验 + 登录页**已实现（Day 8）、**列表分页 + 执行统计接口**已实现（Day 9）、
+**AI 辅助（用例生成 / 失败分析）**已实现（Day 10，见上文「AI 辅助」一节）。
 Day 9 另外修掉三个静默缺陷：计划编辑器保存会丢用例、报告文件名同一秒互相覆盖、
 列表页挂载时重复请求一次。
 

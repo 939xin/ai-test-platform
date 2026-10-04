@@ -100,6 +100,10 @@ npm run dev
 > 只有四类不校验：`/api/auth/login`、`/api/health`、`/api/demo/*`，以及报告 HTML
 > 与报告里的截图 —— 后两者是浏览器直接导航打开的，带不了 `Authorization` 头。
 
+> 🤖 AI 辅助（用例生成 / 失败分析）走 DeepSeek：把 `backend/.env` 里的
+> `DEEPSEEK_API_KEY` 填上再重启后端。**没配也不影响其它功能** ——
+> 点 AI 按钮会返回 400 并提示去配 key。AI 调用超时 60 秒、失败自动重试 1 次。
+
 ---
 
 ## 项目结构
@@ -157,7 +161,7 @@ npm run dev
 
 ## 开发状态
 
-> 更新时间：2026-10-03（Day 9）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
+> 更新时间：2026-10-04（Day 10）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
 
 | 模块 | 状态 |
 |---|---|
@@ -168,7 +172,7 @@ npm run dev
 | 场景串联 / 数据驱动 | ✅ 完成（仅接口用例） |
 | 执行中心 / 测试报告 / 测试计划 | ✅ 完成 |
 | 缺陷管理 | ✅ 完成（含失败记录一键转缺陷） |
-| AI 辅助（用例生成 / 失败分析） | 📋 占位页（`.env` 里 key 是空占位） |
+| AI 辅助（用例生成 / 失败分析） | ✅ 完成（DeepSeek；AI 助手页 + 用例编辑页生成 + 执行详情分析失败，每次调用落 `ai_task`。需在 `backend/.env` 配 `DEEPSEEK_API_KEY`） |
 | 设置 | 📋 占位页 |
 | 列表分页 | ✅ 完成（6 个列表接口返回 `{ items, total }`；项目 / 环境 / 数据集保持裸数组 —— 它们是下拉数据源） |
 | Docker 部署（含前后端） | 📋 仅数据库跑了 compose |
@@ -176,7 +180,7 @@ npm run dev
 ### 验收
 
 ```bash
-cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 164 项，需后端已启动
+cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 171 项，需后端已启动
 ```
 
 前端改动后建议用浏览器过一遍 13 条业务路由（外加登录页），确认无 console 报错与失败请求。
