@@ -71,7 +71,16 @@ def _case_names(db: Session, case_ids: set[int]) -> dict[int, str]:
     return dict(db.execute(select(TestCase.id, TestCase.name).where(TestCase.id.in_(case_ids))).all())
 
 
-def execution_out(execution: Execution, case_name: str | None) -> ExecutionOut:
+def _case_types(db: Session, case_ids: set[int]) -> dict[int, str]:
+    """一次查出 id → 用例类型（api / web）。列表页靠它区分两类执行。"""
+    if not case_ids:
+        return {}
+    return dict(db.execute(select(TestCase.id, TestCase.type).where(TestCase.id.in_(case_ids))).all())
+
+
+def execution_out(
+    execution: Execution, case_name: str | None, case_type: str | None = None
+) -> ExecutionOut:
     """执行记录转成响应模型（公开函数，api/plans.py 复用）。"""
     return ExecutionOut(
         id=execution.id,
@@ -79,6 +88,7 @@ def execution_out(execution: Execution, case_name: str | None) -> ExecutionOut:
         plan_id=execution.plan_id,
         case_id=execution.case_id,
         case_name=case_name,
+        case_type=case_type,
         status=execution.status,
         start_time=execution.start_time,
         end_time=execution.end_time,
@@ -249,7 +259,7 @@ def run_case_data_driven(
         db.commit()
         db.refresh(execution)
 
-        results.append(execution_out(execution, case.name))
+        results.append(execution_out(execution, case.name, case.type))
 
     return DataDrivenRunResult(
         case_id=case.id,
@@ -321,7 +331,9 @@ def list_executions(
         stmt = stmt.where(*conds)
 
     rows, total = paginate(db, stmt.order_by(Execution.id.desc()), page)
-    name_map = _case_names(db, {row.case_id for row in rows if row.case_id is not None})
+    case_ids = {row.case_id for row in rows if row.case_id is not None}
+    name_map = _case_names(db, case_ids)
+    type_map = _case_types(db, case_ids)
 
     return Page(items=[
         ExecutionBrief(
@@ -329,6 +341,7 @@ def list_executions(
             project_id=row.project_id,
             case_id=row.case_id,
             case_name=name_map.get(row.case_id),
+            case_type=type_map.get(row.case_id),
             status=row.status,
             duration_ms=row.duration_ms,
             created_at=row.created_at,
@@ -343,5 +356,7 @@ def get_execution(execution_id: int, db: Session = Depends(get_db)):
     if execution is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="执行记录不存在")
 
-    name_map = _case_names(db, {execution.case_id} if execution.case_id else set())
-    return execution_out(execution, name_map.get(execution.case_id))
+    case_ids = {execution.case_id} if execution.case_id else set()
+    name_map = _case_names(db, case_ids)
+    type_map = _case_types(db, case_ids)
+    return execution_out(execution, name_map.get(execution.case_id), type_map.get(execution.case_id))

@@ -1,9 +1,11 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Warning } from '@element-plus/icons-vue'
+import { MagicStick, Warning } from '@element-plus/icons-vue'
 
+import AiAnalysisDialog from '@/components/AiAnalysisDialog.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import { analyzeFailure } from '@/api/ai'
 import { createDefectFromExecution } from '@/api/defect'
 
 const props = defineProps({
@@ -50,6 +52,39 @@ const hasExtract = computed(
 const steps = computed(() => props.execution.result_json?.steps || [])
 const isWeb = computed(() => steps.value.length > 0)
 
+// ---------- AI 失败分析 ----------
+const analyzing = ref(false)
+const analysisVisible = ref(false)
+const analysis = ref(null)
+
+/**
+ * 是否接口执行。优先用后端按 case_id 回查的 case_type；
+ * 拿不到这个字段时（刚跑完用例的接口直接返回 ORM 记录，没有该属性）
+ * 退回上面那个启发式判断 —— 这两种场景下 steps 的有无正好等价于类型。
+ */
+const isApiExecution = computed(() => {
+  if (props.execution.case_type) return props.execution.case_type === 'api'
+  return !isWeb.value
+})
+
+// 对通过的执行分析「失败原因」没有意义，所以条件与旁边的「提缺陷」保持一致
+const canAnalyzeFailure = computed(
+  () =>
+    isApiExecution.value &&
+    (props.execution.status === 'fail' || props.execution.status === 'error'),
+)
+
+async function analyzeFailureNow() {
+  if (analyzing.value) return
+  analyzing.value = true
+  try {
+    analysis.value = await analyzeFailure({ execution_id: props.execution.id })
+    analysisVisible.value = true
+  } finally {
+    analyzing.value = false
+  }
+}
+
 /**
  * 截图存的是相对 report_dir 的路径（screenshots/execution_12/step_01_xxx.png），
  * /api 已被 vite 代理到后端，拼出来的 URL 正好命中截图路由。
@@ -76,6 +111,17 @@ function prettyJson(value) {
       <span v-if="execution.result_json?.error_msg" class="mono error">
         {{ execution.result_json.error_msg }}
       </span>
+      <el-button
+        v-if="canAnalyzeFailure"
+        class="summary-actions"
+        plain
+        size="small"
+        :icon="MagicStick"
+        :loading="analyzing"
+        @click="analyzeFailureNow"
+      >
+        AI 分析失败
+      </el-button>
       <el-button
         v-if="canRaiseDefect"
         class="summary-actions"
@@ -177,6 +223,8 @@ function prettyJson(value) {
         </p>
       </el-tab-pane>
     </el-tabs>
+
+    <AiAnalysisDialog v-model="analysisVisible" :analysis="analysis" />
   </div>
 </template>
 

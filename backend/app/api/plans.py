@@ -277,7 +277,7 @@ def run_plan(plan_id: int, payload: RunPlanRequest | None = None, db: Session = 
     for link in active:
         case = cases[link.case_id]
         execution = _run_one(db, case, env_dict, plan_id=plan.id, payload=payload)
-        results.append(execution_out(execution, case.name))
+        results.append(execution_out(execution, case.name, case.type))
 
     statuses = [r.status for r in results]
     if all(s == "pass" for s in statuses):

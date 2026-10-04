@@ -61,6 +61,7 @@ class ExecutionOut(BaseModel):
     plan_id: int | None
     case_id: int | None
     case_name: str | None = None
+    case_type: str | None = None  # api / web，由接口按 case_id 回查填充（执行表本身没有）
     status: str
     start_time: datetime | None
     end_time: datetime | None
@@ -74,6 +75,10 @@ class ExecutionBrief(BaseModel):
 
     case_name 由列表接口按 case_id 回查用例名填充 —— 用例被删时 case_id 置 NULL、
     名称也随之为 None，前端显示「已删除用例」。
+
+    case_type（api / web）同样靠回查，不能从 execution 自身判断：执行表里没有类型字段。
+    前端要靠它区分 —— AI 失败分析只对接口执行有意义（Web 执行的 result_json 里是
+    steps 而不是 request/response，喂给模型只能得到「记录里没有请求响应」这种空话）。
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -82,6 +87,7 @@ class ExecutionBrief(BaseModel):
     project_id: int
     case_id: int | None
     case_name: str | None = None
+    case_type: str | None = None
     status: str
     duration_ms: int
     created_at: datetime

@@ -12,7 +12,9 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { MagicStick } from '@element-plus/icons-vue'
 
+import AiGenerateDialog from '@/components/AiGenerateDialog.vue'
 import ApiCaseForm from '@/components/ApiCaseForm.vue'
 import WebCaseForm from '@/components/WebCaseForm.vue'
 import DatasetManagerDialog from '@/components/DatasetManagerDialog.vue'
@@ -46,6 +48,9 @@ const projectId = computed(() => {
 
 const datasets = ref([])
 const datasetDialogVisible = ref(false)
+
+// AI 生成用例弹窗（仅接口用例）：生成的结果勾选后存进当前项目，不影响正在编辑的这条
+const aiVisible = ref(false)
 
 // 浏览器探测结果与枚举：{ available, error, actions, locators }
 const webInfo = ref(null)
@@ -319,6 +324,15 @@ onMounted(load)
     </el-card>
 
     <div class="editor-foot">
+      <el-button
+        v-if="isApi"
+        class="foot-ai"
+        :icon="MagicStick"
+        :disabled="projectId == null"
+        @click="aiVisible = true"
+      >
+        AI 生成用例
+      </el-button>
       <el-button @click="goBack">取消</el-button>
       <el-button type="primary" :loading="submitting" @click="submit">
         {{ isEdit ? '保存修改' : `创建${typeLabel}用例` }}
@@ -330,6 +344,8 @@ onMounted(load)
       :project-id="projectId"
       @pick="(filename) => (form.data_file = filename)"
     />
+
+    <AiGenerateDialog v-model="aiVisible" :project-id="projectId" />
   </div>
 </template>
 
@@ -364,5 +380,10 @@ onMounted(load)
   padding: 12px 24px;
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
+}
+
+/* AI 生成放在最左，与「取消 / 保存」拉开距离，避免误点 */
+.foot-ai {
+  margin-right: auto;
 }
 </style>
