@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app.api import (
-    auth, cases, datasets, defects, environments, executions, health, plans, projects, reports,
+    ai, auth, cases, datasets, defects, environments, executions, health, plans, projects, reports,
     scenarios, web,
 )
 from app.api.deps import get_current_user
@@ -71,6 +71,7 @@ app.include_router(plans.router, prefix="/api", tags=["plans"], dependencies=gua
 app.include_router(datasets.router, prefix="/api", tags=["datasets"], dependencies=guard)
 app.include_router(defects.router, prefix="/api", tags=["defects"], dependencies=guard)
 app.include_router(web.router, prefix="/api", tags=["web"], dependencies=guard)
+app.include_router(ai.router, prefix="/api", tags=["ai"], dependencies=guard)
 
 # Web UI 测试的离线演示页。挂在 /api 之下，前端 vite proxy 和验收脚本的 BASE
 # 都不需要额外配置；StaticFiles 自带路径穿越防护，且演示页只读。
