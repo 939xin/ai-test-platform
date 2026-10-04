@@ -25,7 +25,7 @@ from app.schemas.execution import (
     RunCaseRequest,
     RunWebRequest,
 )
-from app.services import web_executor
+from app.services import web_executor, web_session
 from app.services.api_executor import execute_case
 from app.services.dataset import load_rows
 
@@ -180,6 +180,11 @@ def run_web_case(
     db.commit()
     db.refresh(execution)
 
+    # 登录态：勾了「需要登录态」就取一份在起完 driver 后注入。
+    # 取不到不是错误 —— 照常执行，由断言暴露问题，并在结果里标 missing，
+    # 让界面能说清「失败是因为没有登录态」，而不是让人对着一堆找不到的元素发呆。
+    session_state, session_row = web_session.prepare_for_case(db, case)
+
     # 截图按执行记录分目录，文件名全 ASCII，避开中文路径在驱动侧的各种坑
     shot_dir = Path(settings.report_dir) / "screenshots" / f"execution_{execution.id}"
     result = web_executor.execute_case(
@@ -189,7 +194,11 @@ def run_web_case(
         timeout=payload.timeout,
         screenshot_dir=str(shot_dir),
         screenshot_root=settings.report_dir,
+        session_state=session_state,
+        capture_session=case.login_case,
     )
+
+    web_session.finish_case(db, case, result, session_row)
 
     execution.status = result["status"]
     execution.end_time = datetime.now()

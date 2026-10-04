@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.api import (
     ai, auth, cases, datasets, defects, environments, executions, health, plans, projects, reports,
-    scenarios, system, web,
+    scenarios, system, web, web_sessions,
 )
 from app.api.deps import get_current_user
 from app.config import settings
@@ -76,6 +76,7 @@ app.include_router(plans.router, prefix="/api", tags=["plans"], dependencies=gua
 app.include_router(datasets.router, prefix="/api", tags=["datasets"], dependencies=guard)
 app.include_router(defects.router, prefix="/api", tags=["defects"], dependencies=guard)
 app.include_router(web.router, prefix="/api", tags=["web"], dependencies=guard)
+app.include_router(web_sessions.router, prefix="/api", tags=["web-sessions"], dependencies=guard)
 app.include_router(ai.router, prefix="/api", tags=["ai"], dependencies=guard)
 app.include_router(system.router, prefix="/api", tags=["system"], dependencies=guard)
 

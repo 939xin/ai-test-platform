@@ -32,7 +32,7 @@ from app.schemas.plan import (
     PlanUpdate,
     RunPlanRequest,
 )
-from app.services import web_executor
+from app.services import web_executor, web_session
 from app.services.api_executor import execute_case
 
 router = APIRouter()
@@ -221,8 +221,13 @@ def _run_one(db: Session, case: TestCase, env_dict: dict, *, plan_id: int,
                 "duration_ms": 0,
                 "error_msg": "该 Web 用例还没有配置可执行的步骤",
                 "steps": [],
+                # 与真正跑过一轮的结果保持同一副骨架，前端不用为这种情况写分支
+                "session": web_session.empty_session_info(),
             }
         else:
+            # 登录态与单条执行同源：同一条登录用例、同一份状态，两条路径不各写一套
+            session_state, session_row = web_session.prepare_for_case(db, case)
+
             # 截图按执行记录分目录，与单条执行保持同样的落盘结构
             shot_dir = Path(settings.report_dir) / "screenshots" / f"execution_{execution.id}"
             result = web_executor.execute_case(
@@ -232,7 +237,10 @@ def _run_one(db: Session, case: TestCase, env_dict: dict, *, plan_id: int,
                 timeout=payload.web_timeout,
                 screenshot_dir=str(shot_dir),
                 screenshot_root=settings.report_dir,
+                session_state=session_state,
+                capture_session=case.login_case,
             )
+            web_session.finish_case(db, case, result, session_row)
     else:
         result = execute_case(case_to_dict(case), env_dict, timeout=payload.timeout)
 
