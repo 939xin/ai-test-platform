@@ -28,6 +28,7 @@ node_modules/
 # ---------- 工具临时产物 ----------
 .playwright-mcp/
 day*.png
+.cache/
 
 # ---------- IDE / OS ----------
 .vscode/

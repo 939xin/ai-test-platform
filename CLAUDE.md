@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 说明 | 状态 |
 |---|---|---|
-| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–8） |
+| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–9） |
 | `app/` + `main.py` 等 | **旧** PySide6 桌面版 | 冻结，作为引擎复用源 |
 
 新工程的执行引擎（`backend/app/services/`）大量复用旧桌面版 `app/engine`、`app/utils`
