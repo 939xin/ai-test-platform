@@ -74,6 +74,9 @@ const form = reactive({
   extracts: [],
   data_file: '',
   steps: [],
+  // Web 登录态：只有 UI 用例用得上，接口用例一直是 false
+  login_case: false,
+  needs_login: false,
 })
 
 const rules = computed(() => {
@@ -103,6 +106,8 @@ function resetForm() {
     extracts: [],
     data_file: '',
     steps: [],
+    login_case: false,
+    needs_login: false,
   })
 }
 
@@ -154,6 +159,8 @@ async function load() {
       assertions: (data.assertions_json || []).map((a) => ({ ...a })),
       extracts: (data.extract_json || []).map((e) => ({ ...e })),
       data_file: data.data_file || '',
+      login_case: !!data.login_case,
+      needs_login: !!data.needs_login,
       // 老数据里没有新增的槽位字段，补上默认值，否则 v-model 绑到 undefined
       steps: (data.steps_json || []).map((s) => ({
         input_value: '',
@@ -236,6 +243,9 @@ function buildPayload() {
     steps_json: isApi.value ? [] : form.steps.map(normalizeStep),
     // 数据驱动目前只走接口执行器，Web 用例不带数据文件
     data_file: isApi.value ? form.data_file || '' : '',
+    // 接口用例没有登录态概念，一律存 false，免得两类用例混用一个字段时语义漂移
+    login_case: isApi.value ? false : form.login_case,
+    needs_login: isApi.value ? false : form.needs_login,
   }
 }
 

@@ -37,6 +37,41 @@ defineExpose({ validate })
       class="web-alert"
       :title="`本机检测不到可用的 Chrome / Edge，用例可以编辑，但执行会失败：${webInfo.error}`"
     />
+    <el-card shadow="never" class="auth-card">
+      <div class="card-tools">
+        <span class="section-title">登录态</span>
+        <span class="hint">给需要登录的站点用，省掉每条用例重复登录</span>
+      </div>
+
+      <div class="switch-row">
+        <el-switch v-model="form.login_case" />
+        <div class="switch-text">
+          <div class="switch-label">作为登录用例</div>
+          <div class="hint">
+            这条用例执行并且整条通过后，会把浏览器里的 cookie 与
+            localStorage / sessionStorage 存成本项目的登录态，供其他用例复用。
+            没通过就不存 —— 半登录的残次品留给别人用，只会制造更难查的失败。
+          </div>
+        </div>
+      </div>
+
+      <div class="switch-row">
+        <el-switch v-model="form.needs_login" />
+        <div class="switch-text">
+          <div class="switch-label">需要登录态</div>
+          <div class="hint">
+            执行前先注入本项目最近保存的登录态，再跑下面的步骤。
+            还没有登录态时会照常执行、并在执行详情里明确提示，而不是直接报错。
+          </div>
+        </div>
+      </div>
+
+      <p class="auth-foot">
+        登录态按站点（域名 + 端口）保存：用例第一步如果跳到别的域名，注入不会生效 ——
+        这是浏览器的同源规则，不是工具的毛病。
+      </p>
+    </el-card>
+
     <WebStepEditor
       ref="stepEditorRef"
       v-model="form.steps"
@@ -50,5 +85,54 @@ defineExpose({ validate })
 <style scoped>
 .web-alert {
   margin-bottom: 12px;
+}
+
+.auth-card {
+  margin-bottom: 12px;
+}
+
+.card-tools {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 8px 0;
+}
+
+/* 开关顶部与标题那行对齐：标题是 14px 单行，约 10px 的顶偏移 */
+.switch-row .el-switch {
+  margin-top: 4px;
+  flex: none;
+}
+
+.switch-label {
+  font-size: 13.5px;
+  color: var(--text-1);
+  margin-bottom: 2px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.7;
+}
+
+.auth-foot {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.7;
 }
 </style>

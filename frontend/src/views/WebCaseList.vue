@@ -15,6 +15,7 @@ import PagePagination from '@/components/PagePagination.vue'
 import RunCaseDialog from '@/components/RunCaseDialog.vue'
 import { listProjects } from '@/api/project'
 import { deleteCase, listCases } from '@/api/case'
+import { clearWebSession, getWebSession } from '@/api/webSession'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,6 +34,10 @@ const filters = reactive({ priority: '', keyword: '' })
 
 const runVisible = ref(false)
 const runningCase = ref(null)
+
+// 本项目当前的登录态（后端没存过就是 null）。只在**项目变化**时查 ——
+// 换筛选条件、翻页都不会让它变，跟着查就是白发请求。
+const webSession = ref(null)
 
 function stepCount(row) {
   return (row.steps_json || []).length
@@ -54,6 +59,26 @@ async function loadProjects() {
   } else if (projects.value.length) {
     currentProjectId.value = projects.value[0].id
   }
+}
+
+async function loadWebSession() {
+  if (currentProjectId.value == null) {
+    webSession.value = null
+    return
+  }
+  // 没有登录态时后端回 null，不是错误 —— 那是新项目的正常状态
+  webSession.value = await getWebSession(currentProjectId.value)
+}
+
+async function clearSession() {
+  await ElMessageBox.confirm(
+    '清除后，「需要登录态」的用例会跑不通，直到重跑一次登录用例。确定清除？',
+    '清除登录态',
+    { type: 'warning', confirmButtonText: '清除', cancelButtonText: '取消' },
+  )
+  const { deleted } = await clearWebSession(currentProjectId.value)
+  ElMessage.success(`已清除 ${deleted} 份登录态`)
+  await loadWebSession()
 }
 
 async function loadCases() {
@@ -139,11 +164,13 @@ async function remove(row) {
 function onProjectChange(id) {
   syncProjectToQuery(id)
   search()
+  loadWebSession()  // 登录态是按项目存的，换项目必须重查
 }
 
 onMounted(async () => {
   await loadProjects()
   await loadCases()
+  await loadWebSession()
 })
 </script>
 
@@ -187,6 +214,26 @@ onMounted(async () => {
         <el-button link :icon="Refresh" @click="loadCases">刷新</el-button>
       </div>
 
+      <!-- 登录态状态条：勾了「需要登录态」的用例跑不通时，第一件要看的就是这里 -->
+      <div v-if="currentProjectId != null" class="session-bar">
+        <span class="session-label">登录态</span>
+        <template v-if="webSession">
+          <span class="mono session-text">
+            来自「{{ webSession.source_case_name || '已删除的用例' }}」·
+            cookie {{ webSession.cookie_count }} 项 ·
+            localStorage {{ webSession.local_storage_keys.length }} 个键 ·
+            更新于 {{ formatTime(webSession.updated_at) }}
+          </span>
+          <el-tag v-if="webSession.expired" type="warning" size="small" effect="light">
+            cookie 已过期，建议重跑登录用例
+          </el-tag>
+          <el-button link type="danger" size="small" @click="clearSession">清除</el-button>
+        </template>
+        <span v-else class="session-text is-empty">
+          本项目还没有登录态 —— 把一条用例勾上「作为登录用例」跑一次就会生成
+        </span>
+      </div>
+
       <el-table v-loading="loading" :data="cases">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="用例名称" min-width="220" />
@@ -200,6 +247,13 @@ onMounted(async () => {
           <template #default="{ row }">
             <el-tag v-if="row.enabled" type="success" size="small" effect="plain">启用</el-tag>
             <el-tag v-else type="info" size="small" effect="plain">停用</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="登录态" width="120">
+          <template #default="{ row }">
+            <el-tag v-if="row.login_case" type="warning" size="small" effect="light">登录用例</el-tag>
+            <el-tag v-else-if="row.needs_login" type="success" size="small" effect="light">需登录态</el-tag>
+            <span v-else class="is-zero">—</span>
           </template>
         </el-table-column>
         <el-table-column prop="tags" label="标签" min-width="140" show-overflow-tooltip>
@@ -244,6 +298,33 @@ onMounted(async () => {
 
 <style scoped>
 .is-zero {
+  color: var(--text-3);
+}
+
+.session-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.session-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.session-text {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.session-text.is-empty {
   color: var(--text-3);
 }
 </style>

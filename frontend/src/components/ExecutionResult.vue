@@ -67,6 +67,52 @@ const isApiExecution = computed(() => {
   return !isWeb.value
 })
 
+// ---------- 登录态 ----------
+// 只有 Web 执行会有这一段；改造之前的历史执行记录里没有这个键。
+// 后端总是给同一副骨架（各字段都有默认值），所以判断"要不要提示"看的是值，
+// 不是键在不在。
+const sessionInfo = computed(() => props.execution.result_json?.session || null)
+
+/** 返回 null 表示这次执行跟登录态无关，不必占版面 */
+const sessionNote = computed(() => {
+  const s = sessionInfo.value
+  if (!s) return null
+
+  if (s.error) {
+    return {
+      type: 'error',
+      title: '登录态处理失败',
+      text: `${s.error}（本次按「未登录」继续执行，下面的步骤结果仅供参考）`,
+    }
+  }
+  if (s.missing) {
+    return {
+      type: 'warning',
+      title: '没有可用的登录态',
+      text: '本项目还没有保存过登录态，或者刚被清除。把一条用例勾上「作为登录用例」跑一次，再重跑本条。',
+    }
+  }
+  if (s.captured) {
+    return {
+      type: 'success',
+      title: '已保存登录态',
+      text: `导出 cookie ${s.cookies_total} 项、localStorage ${s.local_storage} 项、`
+        + `sessionStorage ${s.session_storage} 项，本项目其他用例可直接复用。`,
+    }
+  }
+  if (s.used) {
+    const detail = `cookie ${s.cookies_added}/${s.cookies_total} 项、`
+      + `localStorage ${s.local_storage} 项、sessionStorage ${s.session_storage} 项`
+    return {
+      type: s.expired ? 'warning' : 'info',
+      title: '已注入登录态',
+      text: `注入 ${detail}。`
+        + (s.expired ? '这个登录态的 cookie 已过期，本条若失败建议重跑登录用例。' : ''),
+    }
+  }
+  return null
+})
+
 // 对通过的执行分析「失败原因」没有意义，所以条件与旁边的「提缺陷」保持一致
 const canAnalyzeFailure = computed(
   () =>
@@ -139,6 +185,16 @@ function prettyJson(value) {
     <el-tabs>
       <!-- Web 用例：逐步列出执行过程，失败步骤带自动截图 -->
       <el-tab-pane v-if="isWeb" :label="`执行步骤 (${steps.length})`">
+        <el-alert
+          v-if="sessionNote"
+          :type="sessionNote.type"
+          :title="sessionNote.title"
+          :description="sessionNote.text"
+          show-icon
+          :closable="false"
+          class="session-alert"
+        />
+
         <div
           v-for="step in steps"
           :key="step.step_order"
@@ -229,6 +285,10 @@ function prettyJson(value) {
 </template>
 
 <style scoped>
+.session-alert {
+  margin-bottom: 12px;
+}
+
 .result-summary {
   display: flex;
   align-items: center;
