@@ -1,4 +1,4 @@
-"""一键验收 — 覆盖 Day 1 ~ Day 11 的全部后端能力。
+"""一键验收 — 覆盖 Day 1 ~ Day 12 的全部后端能力。
 
 用法（在 backend/ 目录下，需后端已启动）：
     venv/Scripts/python.exe scripts/verify_all.py
@@ -6,6 +6,7 @@
 每个开发阶段结束后跑一次，确认没有回归。
 Day 1-3 段需要外网（httpbin.org）；Day 4 起用后端自带的离线演示页，不依赖外网。
 AI 那一段完全离线：把 ai_client 里的 httpx.post 换掉，不真的调 DeepSeek。
+Web 登录态那一段也只走 /api/demo/ 下的离线靶页，不出网。
 """
 import io
 import json
@@ -133,7 +134,7 @@ def section(title: str) -> None:
 
 def main() -> int:
     print("=" * 54)
-    print("  验收：Day 1-3 闭环 + Web UI + 计划 + 缺陷 + 分页 + AI 辅助 + 设置")
+    print("  验收：Day 1-3 闭环 + Web UI + 计划 + 缺陷 + 分页 + AI 辅助 + 设置 + 登录态")
     print("=" * 54)
 
     # ==================== Day 1 ====================
@@ -1207,6 +1208,236 @@ def main() -> int:
             db.delete(row)
             db.commit()
         db.close()
+
+    # ==================== Day 12 · Web 登录态复用 ====================
+    section("Day 12 · Web 登录态复用 ★")
+
+    # 这两个靶页是专门为登录态新增的，**没有动 index.html** ——
+    # Day 4 那 44 项断言依赖它现有的 DOM，改它等于拿已验收的东西冒险。
+    LOGIN_URL = f"{BASE}/demo/login-state.html"
+    PROTECT_URL = f"{BASE}/demo/protected.html"
+    # 靶页里写死的三个值：用来证明令牌没有被回传、也没有落进执行记录
+    TOKEN_VALUES = ["demo-session-ok", "demo-jwt-ok", "demo-sess-ok"]
+
+    r = SESSION.get(f"{BASE}/web/status", timeout=15)
+    if r.status_code != 200 or not r.json().get("available"):
+        print("  ⚠️ 跳过登录态段：本机没有可用的浏览器")
+    else:
+        sess_env_id = None
+        try:
+            # base_url 指向后端自己 —— 顺带用来验 ${base_url} 变量注入
+            r = SESSION.post(f"{BASE}/projects/{pid}/environments", json={
+                "name": "验收·登录态环境", "base_url": "http://127.0.0.1:8000"}, timeout=10)
+            sess_env_id = r.json().get("id") if r.status_code == 201 else None
+
+            login_steps = [
+                {"step_order": 1, "action_type": "open_url", "input_value": LOGIN_URL},
+                {"step_order": 2, "action_type": "clear", "locator_type": "id", "locator_value": "username"},
+                {"step_order": 3, "action_type": "input", "input_value": "admin",
+                 "locator_type": "id", "locator_value": "username"},
+                {"step_order": 4, "action_type": "clear", "locator_type": "id", "locator_value": "password"},
+                {"step_order": 5, "action_type": "input", "input_value": "secret",
+                 "locator_type": "id", "locator_value": "password"},
+                {"step_order": 6, "action_type": "click", "locator_type": "id", "locator_value": "login-btn"},
+                {"step_order": 7, "action_type": "assert_text_contains", "input_value": "登录成功",
+                 "locator_type": "id", "locator_value": "login-msg"},
+            ]
+            protect_steps = [
+                {"step_order": 1, "action_type": "open_url", "input_value": PROTECT_URL},
+                {"step_order": 2, "action_type": "assert_text_contains", "input_value": "已登录",
+                 "locator_type": "id", "locator_value": "auth-state"},
+                {"step_order": 3, "action_type": "assert_text_contains", "input_value": "欢迎 admin",
+                 "locator_type": "id", "locator_value": "welcome"},
+            ]
+
+            r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
+                "name": "验收·Web 登录并导出状态", "type": "web",
+                "login_case": True, "steps_json": login_steps}, timeout=10)
+            sess_login_case = r.json().get("id") if r.status_code == 201 else None
+
+            r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
+                "name": "验收·Web 访问受保护页面", "type": "web",
+                "needs_login": True, "steps_json": protect_steps}, timeout=10)
+            sess_protect_case = r.json().get("id") if r.status_code == 201 else None
+
+            # 一条两个标记都不带的普通 Web 用例：它绝不该被注入登录态
+            r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
+                "name": "验收·Web 普通用例（不带标记）", "type": "web",
+                "steps_json": [
+                    {"step_order": 1, "action_type": "open_url", "input_value": PROTECT_URL},
+                    {"step_order": 2, "action_type": "assert_exists", "input_value": "true",
+                     "locator_type": "id", "locator_value": "auth-state"},
+                ]}, timeout=10)
+            sess_plain_case = r.json().get("id") if r.status_code == 201 else None
+
+            log_detail = SESSION.get(f"{BASE}/cases/{sess_login_case}", timeout=10).json()
+            plain_detail = SESSION.get(f"{BASE}/cases/{sess_plain_case}", timeout=10).json()
+            check("用例的两个登录态标记落库",
+                  log_detail.get("login_case") is True
+                  and log_detail.get("needs_login") is False
+                  and plain_detail.get("login_case") is False
+                  and plain_detail.get("needs_login") is False,
+                  f'登录用例 login_case={log_detail.get("login_case")} / '
+                  f'普通用例 needs_login={plain_detail.get("needs_login")}')
+
+            # ---------- 没有登录态时 ----------
+            r = SESSION.get(f"{BASE}/projects/{pid}/web-session", timeout=10)
+            check("还没有登录态时摘要返回 null（不是 404）",
+                  r.status_code == 200 and r.json() is None, f"status={r.status_code}")
+
+            r = SESSION.post(f"{BASE}/cases/{sess_protect_case}/run-web",
+                             json={"browser": "chrome", "headless": True, "timeout": 180},
+                             timeout=300)
+            no_sess = r.json()
+            web_execution_ids.append(no_sess["id"])
+            ns_steps = no_sess["result_json"].get("steps") or []
+            ns_session = no_sess["result_json"]["session"]
+            check("没有登录态时用例失败，且标了 missing（降级而不是报错）",
+                  no_sess["status"] == "fail" and ns_session["missing"] is True
+                  and ns_session["used"] is False,
+                  f'status={no_sess["status"]} missing={ns_session["missing"]}')
+            check("失败原因说清了是「未登录」，不是一句没头没脑的找不到元素",
+                  any("未登录" in (s.get("message") or "") for s in ns_steps),
+                  next((s.get("message") or "" for s in ns_steps if s.get("message")), "")[:70])
+
+            # ---------- 跑登录用例 ----------
+            r = SESSION.post(f"{BASE}/cases/{sess_login_case}/run-web",
+                             json={"browser": "chrome", "headless": True, "timeout": 180},
+                             timeout=300)
+            login_run = r.json()
+            web_execution_ids.append(login_run["id"])
+            lr_session = login_run["result_json"]["session"]
+            check("登录用例执行通过", login_run["status"] == "pass",
+                  (login_run["result_json"].get("error_msg") or "")[:70])
+            check("登录用例导出了登录态",
+                  lr_session["captured"] is True and lr_session["cookies_total"] >= 1
+                  and lr_session["local_storage"] >= 1,
+                  f'cookie={lr_session["cookies_total"]} '
+                  f'localStorage={lr_session["local_storage"]} '
+                  f'sessionStorage={lr_session["session_storage"]}')
+
+            r = SESSION.get(f"{BASE}/projects/{pid}/web-session", timeout=10)
+            summary = r.json() or {}
+            check("导出后可查到登录态，且带来源用例名",
+                  r.status_code == 200
+                  and summary.get("source_case_name") == "验收·Web 登录并导出状态",
+                  f'source={summary.get("source_case_name")}')
+            check("三个通道都存下来了（cookie / localStorage / sessionStorage）",
+                  summary.get("cookie_count", 0) >= 1
+                  and "demo_token" in (summary.get("local_storage_keys") or [])
+                  and "demo_tmp" in (summary.get("session_storage_keys") or []),
+                  f'cookie={summary.get("cookie_count")} '
+                  f'ls={summary.get("local_storage_keys")} '
+                  f'ss={summary.get("session_storage_keys")}')
+            check("接口摘要只回 storage 的 key，不回令牌值",
+                  not any(v in json.dumps(summary, ensure_ascii=False) for v in TOKEN_VALUES),
+                  "扫过 3 个令牌值，摘要里均未出现")
+
+            # ---------- 复用登录态 ----------
+            r = SESSION.post(f"{BASE}/cases/{sess_protect_case}/run-web",
+                             json={"browser": "chrome", "headless": True, "timeout": 180},
+                             timeout=300)
+            with_sess = r.json()
+            web_execution_ids.append(with_sess["id"])
+            ws_session = with_sess["result_json"]["session"]
+            check("复用登录态后，受保护页面直接通过（没有重新登录）",
+                  with_sess["status"] == "pass",
+                  " / ".join(f'{s["step_order"]}:{s["status"]}'
+                             for s in with_sess["result_json"]["steps"]))
+            check("注入条数完整（cookie 全进、两个 storage 都写了）",
+                  ws_session["used"] is True
+                  and ws_session["cookies_added"] == ws_session["cookies_total"] >= 1
+                  and ws_session["local_storage"] >= 1 and ws_session["session_storage"] >= 1,
+                  f'cookie {ws_session["cookies_added"]}/{ws_session["cookies_total"]} '
+                  f'ls={ws_session["local_storage"]} ss={ws_session["session_storage"]}')
+            check("执行记录里没有令牌明文（不然会永久留在执行历史里）",
+                  not any(v in json.dumps(with_sess["result_json"], ensure_ascii=False)
+                          for v in TOKEN_VALUES),
+                  "扫过 3 个令牌值，执行记录里均未出现")
+
+            # ---------- 不勾标记的用例不该被注入 ----------
+            r = SESSION.post(f"{BASE}/cases/{sess_plain_case}/run-web",
+                             json={"browser": "chrome", "headless": True, "timeout": 180},
+                             timeout=300)
+            plain_run = r.json()
+            web_execution_ids.append(plain_run["id"])
+            pr_session = plain_run["result_json"]["session"]
+            check("不带「需要登录态」标记的用例不会被注入",
+                  pr_session["used"] is False and pr_session["cookies_added"] == 0,
+                  f'used={pr_session["used"]} cookies_added={pr_session["cookies_added"]}')
+
+            # ---------- ${base_url} 变量注入 ----------
+            # 改这个 bug 之前，这里会把字面量 "${base_url}/api/demo/..." 拿去访问
+            r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
+                "name": "验收·Web 用 ${base_url}", "type": "web",
+                "steps_json": [
+                    {"step_order": 1, "action_type": "open_url",
+                     "input_value": "${base_url}/api/demo/protected.html"},
+                    {"step_order": 2, "action_type": "assert_exists", "input_value": "true",
+                     "locator_type": "id", "locator_value": "auth-state"},
+                ]}, timeout=10)
+            base_url_case = r.json().get("id") if r.status_code == 201 else None
+            r = SESSION.post(f"{BASE}/cases/{base_url_case}/run-web",
+                             json={"browser": "chrome", "headless": True, "timeout": 180,
+                                   "env_id": sess_env_id}, timeout=300)
+            base_url_run = r.json()
+            web_execution_ids.append(base_url_run["id"])
+            check("${base_url} 在 Web 步骤里能解析（不再被原样拿去访问）",
+                  base_url_run["status"] == "pass",
+                  ((base_url_run["result_json"].get("steps") or [{}])[0].get("message")
+                   or "")[:80])
+
+            # ---------- cookie 到期标记 ----------
+            # 手工把 expires_at 改到过去，不去真等一天、也不动系统时间
+            from datetime import datetime as _dt, timedelta as _td
+            from app.database import SessionLocal as _SessionLocal
+            from app.models import WebSession as _WebSession
+
+            db = _SessionLocal()
+            try:
+                row = (db.query(_WebSession)
+                       .filter(_WebSession.project_id == pid)
+                       .order_by(_WebSession.id.desc()).first())
+                if row is not None:
+                    row.expires_at = _dt.now() - _td(minutes=1)
+                    db.commit()
+            finally:
+                db.close()
+
+            expired_summary = SESSION.get(f"{BASE}/projects/{pid}/web-session", timeout=10).json() or {}
+            check("cookie 到期后摘要里标记 expired（只做提醒，不阻断执行）",
+                  expired_summary.get("expired") is True,
+                  f'expires_at={expired_summary.get("expires_at")}')
+
+            # ---------- 清除 ----------
+            r = SESSION.delete(f"{BASE}/projects/{pid}/web-session", timeout=10)
+            deleted = r.json().get("deleted", 0) if r.status_code == 200 else -1
+            cleared = SESSION.get(f"{BASE}/projects/{pid}/web-session", timeout=10).json()
+            check("清除登录态返回删除条数，且再查为 null",
+                  r.status_code == 200 and deleted >= 1 and cleared is None,
+                  f"deleted={deleted}")
+
+            r = SESSION.post(f"{BASE}/cases/{sess_protect_case}/run-web",
+                             json={"browser": "chrome", "headless": True, "timeout": 180},
+                             timeout=300)
+            after_clear = r.json()
+            web_execution_ids.append(after_clear["id"])
+            check("清掉登录态后同一条用例又跑不通（证明状态真在被使用）",
+                  after_clear["status"] == "fail"
+                  and after_clear["result_json"]["session"]["missing"] is True,
+                  f'status={after_clear["status"]}')
+        finally:
+            if sess_env_id:
+                SESSION.delete(f"{BASE}/environments/{sess_env_id}", timeout=10)
+
+    # 这两条不需要浏览器，放在守卫外面 —— 无 GUI 的机器上也必须验到
+    if pid:
+        check("无 token 读登录态摘要 → 401",
+              requests.get(f"{BASE}/projects/{pid}/web-session",
+                           timeout=10).status_code == 401)
+        check("无 token 清登录态 → 401",
+              requests.delete(f"{BASE}/projects/{pid}/web-session",
+                              timeout=10).status_code == 401)
 
     # ==================== 清理 ====================
     section("清理验收数据")
