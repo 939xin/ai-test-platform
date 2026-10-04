@@ -32,6 +32,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from app.config import settings
+from app.services import web_session
 from app.services.browser_manager import create_driver
 from app.services.variable_resolver import VariableResolver
 
@@ -769,18 +770,31 @@ class _StepRunner:
 def execute_case(case: dict, environment: dict | None = None, browser: str = "chrome",
                  headless: bool = True, timeout: int = DEFAULT_CASE_TIMEOUT,
                  driver=None, screenshot_dir: str | None = None,
-                 screenshot_root: str | None = None) -> dict:
+                 screenshot_root: str | None = None,
+                 session_state: dict | None = None,
+                 capture_session: bool = False) -> dict:
     """执行一条 Web UI 用例。
 
-    case:        TestCase 的字段字典（含 steps_json）
-    environment: 环境字典（含 base_url / variables_json），供 ${变量} 解析
-    driver:      传入则复用（供将来的场景串联/批量执行），不传则自建并在结束时关闭
+    case:            TestCase 的字段字典（含 steps_json）
+    environment:     环境字典（含 base_url / variables_json），供 ${变量} 解析
+    driver:          传入则复用（供将来的场景串联/批量执行），不传则自建并在结束时关闭
+    session_state:   需要登录态时传入（web_session.state_of() 的结果），起完 driver 先注入
+    capture_session: 登录用例传 True：执行通过后导出 cookie / storage 供其他用例复用
 
     返回可直接存进 execution.result_json 的结构。status 取 pass / fail / error：
     驱动起不来、没有步骤等「跑都没跑成」的情况记 error，与步骤断言失败区分开。
+
+    ⚠️ capture_session 导出成功时，原始状态放在 `_captured_session` 键里返回。
+    **落库前必须先 pop 出来** —— 那里面是等价于会话令牌的东西，不能混进
+    execution.result_json 永久留存。
     """
     environment = environment or {}
     steps = [s for s in (case.get("steps_json") or []) if s.get("enabled", True)]
+
+    # session 这段状态由本函数和执行接口共同填充：
+    # missing / expired 是「有没有可用的登录态」，只有查库的那一方知道，
+    # 所以由调用方（web_session.finish_case）在拿到 result 后补写。
+    session_info = web_session.empty_session_info()
 
     started = time.time()
     result = {
@@ -793,6 +807,7 @@ def execute_case(case: dict, environment: dict | None = None, browser: str = "ch
         "extract_errors": [],
         "screenshot_errors": [],
         "steps": [],
+        "session": session_info,
     }
 
     if not steps:
@@ -813,8 +828,31 @@ def execute_case(case: dict, environment: dict | None = None, browser: str = "ch
 
     shot_dir = Path(screenshot_dir or settings.screenshot_dir)
     shot_root = Path(screenshot_root or settings.report_dir)
-    resolver = VariableResolver(global_vars=environment.get("variables_json") or {})
+
+    # base_url 与 variables_json 平级注入。ACTION_SPEC 里 open_url 的提示写着
+    # 「可含 ${变量}，如 ${base_url}/login」，但此前只注入了 variables_json，
+    # 那句话根本兑不了现：占位符不被替换，浏览器会去访问字面量 "${base_url}/login"。
+    # variables_json 放后面 —— 用户自己显式定义的同名变量应当优先。
+    global_vars = {
+        "base_url": (environment.get("base_url") or "").rstrip("/"),
+        **(environment.get("variables_json") or {}),
+    }
+    resolver = VariableResolver(global_vars=global_vars)
     runner = _StepRunner(driver, resolver, shot_dir, shot_root)
+
+    # 登录态注入要赶在跑步骤之前：它会先跳一次 origin 当跳板，
+    # 之后用例自己的第一步（通常是 open_url）再跳到实际页面，此时同源下已经就绪。
+    # 注入失败不让整条用例中断 —— 记下来，按「未登录」继续跑，让断言去暴露问题。
+    if session_state is not None:
+        session_info["used"] = True
+        try:
+            info = web_session.apply_state(driver, session_state)
+            for key in ("origin", "cookies_added", "cookies_total",
+                        "local_storage", "session_storage", "error"):
+                session_info[key] = info.get(key, session_info[key])
+        except Exception as e:
+            session_info["error"] = f"注入登录态失败: {type(e).__name__}: {str(e)[:200]}"
+            logger.warning("注入登录态失败，按未登录继续执行", exc_info=True)
 
     try:
         deadline = time.time() + max(int(timeout or DEFAULT_CASE_TIMEOUT), 30)
@@ -831,6 +869,26 @@ def execute_case(case: dict, environment: dict | None = None, browser: str = "ch
                 })
                 break
             result["steps"].append(runner.run_step(step, index))
+
+        # 登录态导出必须在 driver.quit() 之前 —— quit 在下面的 finally 里，
+        # 这里还在 try 中，driver 还活着。
+        # 只在这条用例**整条都通过**时才导出：跑挂了的登录用例存下来的状态，
+        # 大概率是个半登录的残次品，留给别的用例用只会制造更难查的失败。
+        if (capture_session and not result["error_msg"] and result["steps"]
+                and all(s["status"] == "pass" for s in result["steps"])):
+            try:
+                captured = web_session.capture_state(driver)
+                result["_captured_session"] = captured
+                session_info["captured"] = True
+                # 顺手把"存下来了多少"记进结果，界面上才能说清这次登录存了什么 ——
+                # 只报一个 captured=True，出问题时无从下手
+                session_info["origin"] = captured.get("origin", "")
+                session_info["cookies_total"] = len(captured.get("cookies") or [])
+                session_info["local_storage"] = len(captured.get("local_storage") or {})
+                session_info["session_storage"] = len(captured.get("session_storage") or {})
+            except Exception as e:
+                session_info["error"] = f"导出登录态失败: {type(e).__name__}: {str(e)[:200]}"
+                logger.warning("导出登录态失败", exc_info=True)
     except Exception as e:  # driver 级别崩溃，兜底成 error
         result["error_msg"] = f"执行中断: {type(e).__name__}: {str(e)[:300]}"
         logger.exception("Web 用例执行中断")
