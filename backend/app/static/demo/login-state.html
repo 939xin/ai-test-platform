@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>登录（登录态演示）</title>
+<style>
+  body { font-family: "Microsoft YaHei", Arial, sans-serif; margin: 0; padding: 24px;
+         background: #f5f7f7; color: #22333b; }
+  h1 { color: #16697A; font-size: 20px; margin: 0 0 4px; }
+  .hint { color: #647878; font-size: 13px; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #dde5e5; border-radius: 6px;
+          padding: 16px; margin-bottom: 16px; max-width: 480px; }
+  label { display: block; font-size: 13px; margin-bottom: 4px; color: #46626a; }
+  input { box-sizing: border-box; padding: 7px 9px; border: 1px solid #cfdcdc;
+          border-radius: 4px; font-size: 14px; width: 100%; }
+  .row { margin-bottom: 12px; }
+  button { background: #16697A; color: #fff; border: 0; border-radius: 4px;
+           padding: 8px 18px; font-size: 14px; cursor: pointer; }
+  button:hover { background: #125665; }
+  #login-msg { margin-top: 12px; font-size: 14px; min-height: 20px; }
+  .ok { color: #2e9e6b; font-weight: bold; }
+  .bad { color: #c0392b; font-weight: bold; }
+  code { background: #eef4f5; padding: 1px 5px; border-radius: 3px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<h1>登录（登录态演示）</h1>
+<p class="hint">点「登录」时，本页会把登录态**同时写进三个地方**，供登录态复用链路验证。</p>
+
+<div class="card">
+  <div class="row">
+    <label for="username">用户名</label>
+    <input id="username" type="text" value="admin">
+  </div>
+  <div class="row">
+    <label for="password">密码</label>
+    <input id="password" type="password" value="secret">
+  </div>
+  <button id="login-btn" type="button">登录</button>
+  <div id="login-msg"></div>
+</div>
+
+<p class="hint">
+  凭据固定为 <code>admin</code> / <code>secret</code>。登录成功后写入：<br>
+  cookie <code>demo_sid</code> · localStorage <code>demo_token</code> · sessionStorage <code>demo_tmp</code><br>
+  随后可以打开 <code>protected.html</code> 查看登录态是否被带过去。
+</p>
+
+<script>
+  // 三个通道用不同的值，出问题时能一眼看出是哪个通道没带过来
+  var EXPECTED_USER = 'admin';
+  var EXPECTED_PWD = 'secret';
+
+  document.getElementById('login-btn').addEventListener('click', function () {
+    var user = document.getElementById('username').value.trim();
+    var pwd = document.getElementById('password').value;
+    var msg = document.getElementById('login-msg');
+
+    if (user !== EXPECTED_USER || pwd !== EXPECTED_PWD) {
+      msg.className = 'bad';
+      msg.innerText = '用户名或密码不正确';
+      return;
+    }
+
+    // ---- 写 cookie：有效期 1 天，这样它自带 expiry，能被导出成 expires_at ----
+    document.cookie = 'demo_sid=demo-session-ok; path=/; max-age=86400';
+    // ---- 写两个 storage ----
+    window.localStorage.setItem('demo_token', 'demo-jwt-ok');
+    window.sessionStorage.setItem('demo_tmp', 'demo-sess-ok');
+
+    msg.className = 'ok';
+    msg.innerText = '登录成功';
+  });
+</script>
+
+</body>
+</html>

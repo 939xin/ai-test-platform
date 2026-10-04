@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>受保护页面（登录态演示）</title>
+<style>
+  body { font-family: "Microsoft YaHei", Arial, sans-serif; margin: 0; padding: 24px;
+         background: #f5f7f7; color: #22333b; }
+  h1 { color: #16697A; font-size: 20px; margin: 0 0 4px; }
+  .hint { color: #647878; font-size: 13px; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #dde5e5; border-radius: 6px;
+          padding: 16px; margin-bottom: 16px; max-width: 560px; }
+  #auth-state { display: inline-block; padding: 3px 12px; border-radius: 10px;
+                font-size: 14px; font-weight: bold; }
+  #auth-state.ok { background: #e8f6ef; color: #2e9e6b; }
+  #auth-state.bad { background: #fdecea; color: #c0392b; }
+  #welcome { margin-top: 12px; font-size: 15px; color: #16697A; font-weight: bold;
+             min-height: 20px; }
+  table { border-collapse: collapse; font-size: 13px; width: 100%; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #eef2f2; }
+  th { color: #46626a; font-weight: normal; }
+  code { background: #eef4f5; padding: 1px 5px; border-radius: 3px; font-size: 12.5px; }
+  .yes { color: #2e9e6b; }
+  .no { color: #c0392b; }
+</style>
+</head>
+<body>
+
+<h1>受保护页面（登录态演示）</h1>
+<p class="hint">本页**没有任何登录表单** —— 它只看浏览器里有没有带过来的登录态。</p>
+
+<div class="card">
+  <div id="auth-state" class="bad">未登录</div>
+  <div id="welcome"></div>
+</div>
+
+<div class="card">
+  <table>
+    <tr><th>通道</th><th>键</th><th>期望值</th><th>实际</th></tr>
+    <tr><td>cookie</td><td><code>demo_sid</code></td><td>demo-session-ok</td>
+        <td id="ch-cookie" class="no">缺失</td></tr>
+    <tr><td>localStorage</td><td><code>demo_token</code></td><td>demo-jwt-ok</td>
+        <td id="ch-local" class="no">缺失</td></tr>
+    <tr><td>sessionStorage</td><td><code>demo_tmp</code></td><td>demo-sess-ok</td>
+        <td id="ch-session" class="no">缺失</td></tr>
+  </table>
+</div>
+
+<p class="hint">
+  这一页是「登录态复用」的验收靶子：登录用例跑完会导出上面三个通道，
+  需要登录态的用例再注入回来 —— 注入成功的话，这一页打开就是<b>已登录</b>。
+</p>
+
+<script>
+  function readCookie(name) {
+    var pairs = document.cookie ? document.cookie.split(';') : [];
+    for (var i = 0; i < pairs.length; i++) {
+      var kv = pairs[i].trim().split('=');
+      if (kv[0] === name) { return kv.slice(1).join('='); }
+    }
+    return null;
+  }
+
+  function mark(id, value, expected) {
+    var el = document.getElementById(id);
+    if (value === null || value === undefined || value === '') {
+      el.className = 'no';
+      el.innerText = '缺失';
+    } else if (value === expected) {
+      el.className = 'yes';
+      el.innerText = value;
+    } else {
+      el.className = 'no';
+      el.innerText = value + '（与期望不符）';
+    }
+    return value === expected;
+  }
+
+  var cookieOk = mark('ch-cookie', readCookie('demo_sid'), 'demo-session-ok');
+  var localOk = mark('ch-local', window.localStorage.getItem('demo_token'), 'demo-jwt-ok');
+  // sessionStorage 是标签页级的，各浏览器行为有差异，所以只做记录、不作为判定条件
+  mark('ch-session', window.sessionStorage.getItem('demo_tmp'), 'demo-sess-ok');
+
+  var state = document.getElementById('auth-state');
+
+  // 判定「已登录」只要求 cookie + localStorage —— 与后端 apply_state 的注入顺序一致
+  if (cookieOk && localOk) {
+    state.className = 'ok';
+    state.innerText = '已登录';
+    document.getElementById('welcome').innerText = '欢迎 admin';
+  } else {
+    state.className = 'bad';
+    state.innerText = '未登录';
+    document.getElementById('welcome').innerText = '';
+  }
+</script>
+
+</body>
+</html>
