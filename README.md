@@ -48,7 +48,7 @@
 
 **关于 `services/` 层**：执行引擎的断言逻辑、变量解析、请求构造、Selenium 步骤执行等，
 复用自既有的桌面版实现，剥离了原桌面框架的线程外壳后改为无状态服务，供 FastAPI 直接调用。
-整套引擎现在由 `backend/scripts/verify_all.py` 的 203 项验收覆盖。
+整套引擎现在由 `backend/scripts/verify_all.py` 的 205 项验收覆盖。
 
 ---
 
@@ -183,7 +183,7 @@ npm run dev
 ### 验收
 
 ```bash
-cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 203 项，需后端已启动
+cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 205 项，需后端已启动
 ```
 
 前端改动后建议用浏览器过一遍 13 条业务路由（外加登录页），确认无 console 报错与失败请求。

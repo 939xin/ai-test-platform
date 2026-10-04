@@ -116,7 +116,18 @@ def execute_case(case: dict, environment: dict | None = None,
     返回可直接存进 execution.result_json 的结构。
     """
     environment = environment or {}
-    resolver = VariableResolver(global_vars=environment.get("variables_json") or {})
+    # base_url 与 variables_json 平级注入（与 web_executor 同一口径）。
+    # 用例的 url / 请求头 / 请求体里都可能写 ${base_url}，此前只注入了
+    # variables_json，占位符不被替换 —— URL 那一侧会拼出
+    # "https://base/${base_url}/users" 这种垃圾地址。
+    # 这里的写法与 build_request 内解析 base_url 的那句保持一致
+    # （都 strip + 去尾斜杠），保证 ${base_url} 与「自动拼接用的 base_url」
+    # 永远是同一个字符串。
+    global_vars = {
+        "base_url": (environment.get("base_url") or "").strip().rstrip("/"),
+        **(environment.get("variables_json") or {}),
+    }
+    resolver = VariableResolver(global_vars=global_vars)
     method, full_url, headers, body, auth_obj = build_request(case, environment, resolver)
 
     actual_timeout = max(1, min(int(timeout or 30), MAX_TIMEOUT))

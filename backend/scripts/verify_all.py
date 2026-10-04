@@ -1439,6 +1439,49 @@ def main() -> int:
               requests.delete(f"{BASE}/projects/{pid}/web-session",
                               timeout=10).status_code == 401)
 
+    # ---------- ${base_url} 变量注入（接口侧）----------
+    # 与上面 Web 侧那条是同一件事的两半，口径必须一致。修之前 resolver 里
+    # 只有 variables_json，URL 里的占位符不被替换，实际请求地址会变成
+    # "http://127.0.0.1:8000/${base_url}/api/health" 这种垃圾地址。
+    # 这两条同样不需要浏览器，所以放在守卫外面。
+    if pid:
+        api_base_env = None
+        try:
+            r = SESSION.post(f"{BASE}/projects/{pid}/environments", json={
+                "name": "验收·接口侧 ${base_url}", "base_url": "http://127.0.0.1:8000"},
+                timeout=10)
+            api_base_env = r.json().get("id") if r.status_code == 201 else None
+
+            r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
+                "name": "验收·接口用 ${base_url}", "type": "api", "method": "GET",
+                "url": "${base_url}/api/health",
+                # 请求头里也放一个 —— 这条专门钉住「注入的是变量池」，
+                # 而不是有人在拼 URL 时做了次字符串替换
+                "headers_json": {"X-Base-Url": "${base_url}"},
+                "assertions_json": [
+                    {"assertion_type": "status_code", "operator": "eq",
+                     "expected_value": "200", "target": ""},
+                ],
+            }, timeout=10)
+            api_base_case = r.json().get("id") if r.status_code == 201 else None
+
+            api_run = {}
+            if api_base_case:
+                r = SESSION.post(f"{BASE}/cases/{api_base_case}/run",
+                                 json={"env_id": api_base_env, "timeout": 30}, timeout=60)
+                api_run = r.json() if r.status_code == 200 else {}
+            req = (api_run.get("result_json") or {}).get("request") or {}
+            check("${base_url} 在接口用例 URL 里能解析（与 Web 侧同一口径）",
+                  api_run.get("status") == "pass"
+                  and req.get("url") == "http://127.0.0.1:8000/api/health",
+                  str(req.get("url"))[:90])
+            check("${base_url} 在接口用例请求头里同样能解析（注入的是变量池）",
+                  (req.get("headers") or {}).get("X-Base-Url") == "http://127.0.0.1:8000",
+                  str((req.get("headers") or {}).get("X-Base-Url")))
+        finally:
+            if api_base_env:
+                SESSION.delete(f"{BASE}/environments/{api_base_env}", timeout=10)
+
     # ==================== 清理 ====================
     section("清理验收数据")
     if case_id:

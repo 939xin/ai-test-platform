@@ -469,7 +469,14 @@ Web UI 执行已迁移（Day 4）、`_capture_screenshot()` 老 bug 已修（Day
 **侧栏 11 个页面至此全部有实际内容，占位页清零**。
 Day 12 顺手修掉 `${base_url}` 变量注入：`open_url` 与 `ApiCaseForm` 的字段提示
 都写着「支持 `${base_url}`」，但两边都只注入了 `variables_json`。
-**接口侧同样存在这个问题，Day 12 未修**（用户划的范围是「不动接口测试」）。
+**接口侧同日跟进修复，两侧口径已对齐**：`api_executor.execute_case()` 现在把
+`base_url` 与 `variables_json` 平级注入变量池（写法与 `web_executor` 一致，
+且与 `build_request` 内解析 base_url 那句一样 strip + 去尾斜杠，保证
+`${base_url}` 与「自动拼接用的 base_url」永远是同一个字符串）。
+场景串联不必单独改 —— `scenario_runner` 走的是 `execute_case`，它传下去的
+`merged_env` 保留了 `base_url` 键，一处修、两条路一起好。
+验收里两条断言钉着（URL 里能解析 + **请求头里也能解析**，后者专门证明
+注入的是变量池，而不是有人在拼 URL 时做了次字符串替换）。
 Day 9 另外修掉三个静默缺陷：计划编辑器保存会丢用例、报告文件名同一秒互相覆盖、
 列表页挂载时重复请求一次。
 

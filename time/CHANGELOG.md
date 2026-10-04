@@ -195,9 +195,16 @@
 - [x] `GET` / `DELETE /api/projects/{id}/web-session`。没有登录态时返回 **null
       而不是 404** —— 「新项目还没登录过」是正常状态，不是错误。摘要**只回
       storage 的 key、不回 value**（那些 value 就是令牌），执行记录里也不落明文
-- [x] 顺手修掉 `${base_url}` 变量注入：`open_url` 的字段提示写着「可含 `${变量}`，
-      如 `${base_url}/login`」，但此前只注入了 `variables_json`，那句话根本兑不了现 ——
-      占位符不被替换，浏览器会去访问字面量 `"${base_url}/login"`
+- [x] 顺手修掉 `${base_url}` 变量注入（Web 侧）：`open_url` 的字段提示写着
+      「可含 `${变量}`，如 `${base_url}/login`」，但此前只注入了 `variables_json`，
+      那句话根本兑不了现 —— 占位符不被替换，浏览器会去访问字面量 `"${base_url}/login"`
+- [x] **接口侧同日跟进：`${base_url}` 待修 → 已修，两侧口径已对齐**。
+      `ApiCaseForm` 的地址输入框同样写着「支持 `${base_url}` 变量」，而
+      `api_executor.execute_case()` 只注入了 `variables_json` —— 实测最终请求地址是
+      `https://api.example.com/${base_url}/users` 这种垃圾地址。现在 `base_url` 与
+      `variables_json` 平级注入变量池，写法与 `web_executor` 一致。
+      **场景串联不必单独改**：`scenario_runner` 走的就是 `execute_case`，
+      它传下去的 `merged_env` 保留了 `base_url` 键，一处修、两条路一起好
 - [x] 新增两个离线靶页 `login-state.html` / `protected.html`。**没有动
       `index.html`** —— Day 4 那 44 项断言依赖它现有的 DOM
 - [x] `verify_all.py` 新增 19 项（184 → 203）。其中两条是骨架：
@@ -219,6 +226,7 @@
 | Day 10 | 171 |
 | Day 11 | 184 |
 | Day 12 | **203（全过）** |
+| Day 12 补丁（接口侧 `${base_url}`） | **205（全过）** |
 
 ### 已知未做（v2.0.0 范围内）
 
