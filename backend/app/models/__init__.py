@@ -5,6 +5,7 @@
 from app.models.core import Environment, Project, User
 from app.models.execution import AITask, Defect, Execution
 from app.models.testcase import Scenario, ScenarioStep, TestCase, TestPlan, TestPlanCase
+from app.models.websession import WebSession
 
 __all__ = [
     "User",
@@ -18,4 +19,5 @@ __all__ = [
     "Execution",
     "Defect",
     "AITask",
+    "WebSession",
 ]

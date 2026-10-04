@@ -121,6 +121,12 @@ class TestCaseCreate(BaseModel):
     # ---------- Web 步骤 ----------
     steps_json: list[WebStep] = Field(default_factory=list)
 
+    # ---------- Web 登录态标记 ----------
+    # login_case ：执行成功后把浏览器里的 cookie / localStorage 导出成本项目的登录态
+    # needs_login：执行前先注入已保存的登录态，省掉重复登录
+    login_case: bool = False
+    needs_login: bool = False
+
     # ---------- 脚本与数据驱动 ----------
     pre_script: str = ""
     post_script: str = ""
@@ -148,6 +154,9 @@ class TestCaseUpdate(BaseModel):
     assertions_json: list | None = None
     extract_json: list | None = None
     steps_json: list[WebStep] | None = None
+
+    login_case: bool | None = None
+    needs_login: bool | None = None
 
     pre_script: str | None = None
     post_script: str | None = None
@@ -177,6 +186,9 @@ class TestCaseOut(BaseModel):
     assertions_json: list
     extract_json: list
     steps_json: list
+
+    login_case: bool
+    needs_login: bool
 
     pre_script: str
     post_script: str
@@ -210,4 +222,7 @@ class TestCaseBrief(BaseModel):
     steps_json: list = Field(default_factory=list)
     # 列表行会带进执行弹窗，弹窗靠它判断要不要显示「按数据文件逐行执行」
     data_file: str = ""
+    # 列表页要显示「登录用例 / 需登录态」两个标记，少了就只能去详情页才看得见
+    login_case: bool = False
+    needs_login: bool = False
     updated_at: datetime

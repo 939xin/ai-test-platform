@@ -43,6 +43,12 @@ class TestCase(Base):
     # ---------- Web 步骤 ----------
     steps_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
+    # ---------- Web 登录态标记（只有 type=web 有意义） ----------
+    # login_case ：执行成功后把浏览器的 cookie / localStorage 导出成本项目的登录态
+    # needs_login：执行前先把已保存的登录态注入新开的 driver，省掉重复登录
+    login_case: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    needs_login: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
     # ---------- 前置/后置脚本、数据驱动 ----------
     pre_script: Mapped[str] = mapped_column(Text, nullable=False, default="")
     post_script: Mapped[str] = mapped_column(Text, nullable=False, default="")

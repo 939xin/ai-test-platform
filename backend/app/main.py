@@ -15,13 +15,16 @@ from app.config import settings
 
 
 def init_database() -> None:
-    """建表 + 确保存在默认账号。Day 1 用 create_all，表结构稳定后换 Alembic。"""
-    from app import models  # noqa: F401  必须导入，否则元数据里没有表
+    """建表 + 补列 + 确保存在默认账号。
+
+    建表走 database.ensure_schema()：create_all 只建缺失的表，**不会给已有表加列**，
+    所以那里补了一层幂等的列检查。表结构再稳定些应整体换成 Alembic。
+    """
     from app.api.auth import hash_password
-    from app.database import Base, SessionLocal, engine
+    from app.database import SessionLocal, ensure_schema
     from app.models import User
 
-    Base.metadata.create_all(bind=engine)
+    ensure_schema()
 
     db = SessionLocal()
     try:
