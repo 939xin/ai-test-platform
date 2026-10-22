@@ -27,7 +27,9 @@ node_modules/
 
 # ---------- 工具临时产物 ----------
 .playwright-mcp/
+.tmp/
 day*.png
+scenario-*.png
 .cache/
 
 # ---------- IDE / OS ----------
