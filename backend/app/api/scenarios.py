@@ -204,6 +204,7 @@ def run_scenario_endpoint(
                 "method": cases[s.case_id].method,
                 "url": cases[s.case_id].url,
                 "headers_json": cases[s.case_id].headers_json or {},
+                "params_json": cases[s.case_id].params_json or {},
                 "body_type": cases[s.case_id].body_type,
                 "body_content": cases[s.case_id].body_content,
                 "auth_type": cases[s.case_id].auth_type,
@@ -227,12 +228,16 @@ def run_scenario_endpoint(
             "name": scenario.name,
             "step_order": step["step_order"],
         }
+        # start_time / end_time 用 runner 回传的真实时刻。
+        # 原来这里两个都写 now()，等于所有步骤都是「零耗时、同一秒」，
+        # 执行中心里的时间轴全是假的（真实耗时只在 duration_ms 里）。
         db.add(Execution(
             project_id=scenario.project_id,
+            scenario_id=scenario.id,
             case_id=step["case_id"],
             status=step["status"],
-            start_time=datetime.now(),
-            end_time=datetime.now(),
+            start_time=step.get("started_at") or datetime.now(),
+            end_time=step.get("finished_at") or datetime.now(),
             duration_ms=step["duration_ms"],
             result_json=detail,
         ))

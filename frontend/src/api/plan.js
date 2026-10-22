@@ -1,4 +1,5 @@
 import request from './request'
+import { LONG_TASK_TIMEOUT } from './timeouts'
 
 /**
  * 计划列表，支持 { limit, offset }，返回 `{ items, total }`。
@@ -35,5 +36,5 @@ export function deletePlan(planId) {
  * 所以单独放宽 axios 超时，与 runWebCase 同一量级。
  */
 export function runPlan(planId, data = {}) {
-  return request.post(`/plans/${planId}/run`, data, { timeout: 1900000 })
+  return request.post(`/plans/${planId}/run`, data, { timeout: LONG_TASK_TIMEOUT })
 }

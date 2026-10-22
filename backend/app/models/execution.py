@@ -23,6 +23,11 @@ class Execution(Base):
     plan_id: Mapped[int | None] = mapped_column(
         ForeignKey("test_plan.id", ondelete="SET NULL"), nullable=True
     )
+    # 场景执行产生的记录带 scenario_id，才能「按场景查执行历史」；
+    # 从前只能从 result_json.scenario 里翻，那等于没有索引可用。
+    scenario_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scenario.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     case_id: Mapped[int | None] = mapped_column(
         ForeignKey("test_case.id", ondelete="SET NULL"), nullable=True, index=True
     )

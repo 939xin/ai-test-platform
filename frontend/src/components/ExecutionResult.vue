@@ -48,6 +48,11 @@ const hasExtract = computed(
   () => Object.keys(extracted.value).length > 0 || extractErrors.value.length > 0,
 )
 
+// 用例没配查询参数时不显示这一行，省得每条记录都挂一个空 {}
+const hasParams = computed(
+  () => Object.keys(props.execution.result_json?.request?.params || {}).length > 0,
+)
+
 // Web 用例的结果里是 steps（步骤级明细），接口用例是 request/response/assertions
 const steps = computed(() => props.execution.result_json?.steps || [])
 const isWeb = computed(() => steps.value.length > 0)
@@ -228,6 +233,12 @@ function prettyJson(value) {
           <div class="mono block">
             {{ execution.result_json?.request?.method }} {{ execution.result_json?.request?.url }}
           </div>
+          <!-- 查询参数单独一行：URL 保持原样，实际编码由 requests 完成，
+               所以这里不把 query 拼回 URL 里展示，避免与真实请求对不上 -->
+          <template v-if="hasParams">
+            <div class="label">查询参数</div>
+            <pre class="mono pre">{{ prettyJson(execution.result_json.request.params) }}</pre>
+          </template>
           <div class="label">请求头</div>
           <pre class="mono pre">{{ prettyJson(execution.result_json?.request?.headers) }}</pre>
           <template v-if="execution.result_json?.request?.body">
@@ -237,6 +248,16 @@ function prettyJson(value) {
         </el-tab-pane>
 
         <el-tab-pane label="响应">
+          <!-- 响应体超出入库上限时只存了预览，不明确提示的话，
+               用户会把截断后的内容当成接口真实返回 -->
+          <el-alert
+            v-if="execution.result_json?.response_truncated"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="truncated-alert"
+            title="响应体过大，已截断保存；下方内容不是完整响应"
+          />
           <div class="label">状态码</div>
           <div class="mono block">{{ execution.result_json?.response?.status }}</div>
           <div class="label">响应体</div>
@@ -286,6 +307,10 @@ function prettyJson(value) {
 
 <style scoped>
 .session-alert {
+  margin-bottom: 12px;
+}
+
+.truncated-alert {
   margin-bottom: 12px;
 }
 

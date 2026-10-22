@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
   Calendar, Connection, DataAnalysis, Document, Folder, MagicStick,
-  Monitor, Setting, SwitchButton, Tools, VideoPlay, Warning,
+  Monitor, Setting, SwitchButton, Tools, TrendCharts, VideoPlay, Warning,
 } from '@element-plus/icons-vue'
 
 import { fetchHealth } from '@/api/health'
@@ -20,6 +20,7 @@ const navItems = [
   { name: 'web-cases', title: 'UI 测试', icon: Monitor },
   { name: 'scenarios', title: '场景测试', icon: Connection },
   { name: 'plans', title: '测试计划', icon: Calendar },
+  { name: 'perf', title: '性能测试', icon: TrendCharts },
   { name: 'executions', title: '执行中心', icon: VideoPlay },
   { name: 'reports', title: '测试报告', icon: DataAnalysis },
   { name: 'defects', title: '缺陷管理', icon: Warning },
@@ -36,6 +37,8 @@ const parentTitle = computed(() => route.meta?.parent || '')
 const activeNav = computed(() => {
   if (route.path.startsWith('/cases/api')) return 'api-cases'
   if (route.path.startsWith('/cases/web')) return 'web-cases'
+  // 运行记录 / 运行详情不在 /perf 的 children 里，靠前缀让侧栏保持高亮
+  if (route.path.startsWith('/perf')) return 'perf'
   return route.name
 })
 

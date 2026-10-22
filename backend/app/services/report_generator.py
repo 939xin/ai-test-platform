@@ -10,8 +10,10 @@
     因此「一条 execution」对应旧模型的「一个用例 + 若干 detail」，
     请求/响应信息挂在第 1 条 detail 上，断言逐条展开。
 """
+import html
 import json
 import platform
+import secrets
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +34,16 @@ def _pretty(value) -> str:
         except (TypeError, ValueError):
             return str(value)
     return str(value)
+
+
+def _esc(value) -> str:
+    """报告里的所有插值都走这里。
+
+    报告会被浏览器直接打开，而 `/api/reports/{filename}` 是免鉴权的公开路由，
+    未转义等于允许被测接口往页面里注入 HTML/JS。None 统一显示成空串，
+    避免页面上冒出 "None"。
+    """
+    return html.escape("" if value is None else str(value), quote=True)
 
 
 def _execution_to_case(execution: Execution, case_name: str) -> dict:
@@ -123,7 +135,11 @@ def _execution_to_case(execution: Execution, case_name: str) -> dict:
 
 
 def _build_html(results: list[dict], stats: dict) -> str:
-    """构建完整的 HTML 报告 —— 主体照搬旧实现，配色换成新平台的设计令牌。"""
+    """构建完整的 HTML 报告 —— 主体照搬旧实现，配色换成新平台的设计令牌。
+
+    ⚠️ 任何新增插值都必须过 `_esc()`：这里拼的全部是来自被测系统或用户输入的
+    文本（响应体、断言消息、用例名），原样插入就是存储型 XSS。
+    """
     cases_html = ""
     for r in results:
         status_class = "pass" if r['status'] == 'pass' else "fail" if r['status'] in ('fail', 'error') else "skip"
@@ -136,10 +152,10 @@ def _build_html(results: list[dict], stats: dict) -> str:
                 d_status = "✅" if d['status'] == 'pass' else "❌"
                 details_html += f"""
                 <tr class="detail-row">
-                    <td style="text-align:center">{d.get('step_order', '-')}</td>
-                    <td>{d.get('step_description', '-')}</td>
+                    <td style="text-align:center">{_esc(d.get('step_order', '-'))}</td>
+                    <td>{_esc(d.get('step_description', '-'))}</td>
                     <td style="text-align:center">{d_status}</td>
-                    <td>{d.get('message', '') or '-'}</td>
+                    <td>{_esc(d.get('message', '') or '-')}</td>
                 </tr>"""
 
                 # 接口用例：显示请求/响应信息
@@ -159,11 +175,11 @@ def _build_html(results: list[dict], stats: dict) -> str:
                 <tr class="request-detail">
                     <td colspan="4">
                         <div class="request-block">
-                            <strong>📡 请求:</strong> {d.get('request_method', 'GET')} {d.get('request_url', '')}<br>
-                            <strong>📨 请求头:</strong> <pre>{d.get('request_headers', '-')}</pre>
-                            <strong>📦 请求体:</strong> <pre>{d.get('request_body', '-')}</pre>
-                            <strong>📥 响应状态:</strong> {resp_status_str}<br>
-                            <strong>📥 响应体:</strong> <pre>{resp_body_display}</pre>
+                            <strong>📡 请求:</strong> {_esc(d.get('request_method', 'GET'))} {_esc(d.get('request_url', ''))}<br>
+                            <strong>📨 请求头:</strong> <pre>{_esc(d.get('request_headers', '-'))}</pre>
+                            <strong>📦 请求体:</strong> <pre>{_esc(d.get('request_body', '-'))}</pre>
+                            <strong>📥 响应状态:</strong> {_esc(resp_status_str)}<br>
+                            <strong>📥 响应体:</strong> <pre>{_esc(resp_body_display)}</pre>
                         </div>
                     </td>
                 </tr>"""
@@ -177,8 +193,8 @@ def _build_html(results: list[dict], stats: dict) -> str:
                 <tr class="assertion-detail">
                     <td colspan="4">
                         <div class="assertion-block">
-                            <strong>{a_status}:</strong> 期望值=<code>{exp}</code> 实际值=<code>{act}</code><br>
-                            <span style="color:#757575;font-size:12px;">{d.get('message', '')}</span>
+                            <strong>{a_status}:</strong> 期望值=<code>{_esc(exp)}</code> 实际值=<code>{_esc(act)}</code><br>
+                            <span style="color:#757575;font-size:12px;">{_esc(d.get('message', ''))}</span>
                         </div>
                     </td>
                 </tr>"""
@@ -197,8 +213,8 @@ def _build_html(results: list[dict], stats: dict) -> str:
                     <td colspan="4">
                         <div class="screenshot-block">
                             <strong>📸 截图:</strong><br>
-                            <a href="{src}" target="_blank">
-                                <img src="{src}"
+                            <a href="{_esc(src)}" target="_blank">
+                                <img src="{_esc(src)}"
                                      style="max-width:400px; cursor:pointer; border:1px solid #ddd; border-radius:4px;"
                                      title="点击放大/缩小">
                             </a>
@@ -209,9 +225,9 @@ def _build_html(results: list[dict], stats: dict) -> str:
         cases_html += f"""
         <div class="case-card">
             <div class="case-header">
-                <span class="case-name">📋 {r['case_name']}</span>
+                <span class="case-name">📋 {_esc(r['case_name'])}</span>
                 <span class="case-status" style="background:{badge_color}">{status_text}</span>
-                <span class="case-duration">{r.get('duration_ms', 0)}ms</span>
+                <span class="case-duration">{_esc(r.get('duration_ms', 0))}ms</span>
             </div>
             <table class="detail-table">
                 <thead>
@@ -231,7 +247,7 @@ def _build_html(results: list[dict], stats: dict) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>测试报告 - {stats['generated_at']}</title>
+<title>测试报告 - {_esc(stats['generated_at'])}</title>
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
@@ -371,7 +387,7 @@ body {{
 <div class="container">
     <div class="header">
         <h1>📊 测试报告</h1>
-        <p>项目: {stats['project_name']} | 类型: {stats['test_type'].upper()} | 生成时间: {stats['generated_at']}</p>
+        <p>项目: {_esc(stats['project_name'])} | 类型: {_esc(stats['test_type'].upper())} | 生成时间: {_esc(stats['generated_at'])}</p>
     </div>
     <div class="stats-grid">
         <div class="stat-card total">
@@ -396,10 +412,10 @@ body {{
         </div>
     </div>
     <div class="env-info">
-        <span>🕐 生成时间: {stats['generated_at']}</span>
-        <span>💻 OS: {stats['os']}</span>
-        <span>🐍 Python: {stats['python_version']}</span>
-        <span>⏱ 总耗时: {stats['total_duration']}ms</span>
+        <span>🕐 生成时间: {_esc(stats['generated_at'])}</span>
+        <span>💻 OS: {_esc(stats['os'])}</span>
+        <span>🐍 Python: {_esc(stats['python_version'])}</span>
+        <span>⏱ 总耗时: {_esc(stats['total_duration'])}ms</span>
     </div>
     <h2 style="margin-bottom:16px; font-size:18px; color:#3c4c53;">📋 用例详情</h2>
     {cases_html}
@@ -481,7 +497,18 @@ def build_report(db: Session, execution_ids: list[int], test_type: str = "api") 
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     tag = f"r{execution_ids[0]}" if len(execution_ids) == 1 else f"r{len(execution_ids)}cases"
-    path = _write_unique(report_dir, f"report_{test_type}_{tag}_{timestamp}",
-                         _build_html(results, stats))
+    # 文件名带项目 id（p{id}）：报告列表要能按项目筛选，删项目时也要靠它定位孤儿文件。
+    # 老报告没有这一段，解析出来就是 null（见 api/reports.py 的 _project_id_of）。
+    project_id = executions[0].project_id
+    # 末尾 8 位随机段（决策 D5）：/api/reports/{filename} 是免鉴权的，
+    # 而「项目 id + 执行 id + 秒级时间戳」整条规则可推导，等于报告能被枚举。
+    # 随机段放在**最后**：前面的 p{id} 前缀仍供项目筛选与删项目清理用，不受影响。
+    # 不用签名 URL —— 那会把报告里相对路径的截图全部打死（见任务单 D5 技术依据）。
+    random_part = secrets.token_hex(4)
+    path = _write_unique(
+        report_dir,
+        f"report_{test_type}_p{project_id}_{tag}_{timestamp}_{random_part}",
+        _build_html(results, stats),
+    )
 
     return {"filename": path.name, "path": str(path), "stats": stats}

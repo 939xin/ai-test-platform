@@ -23,6 +23,11 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 
+// 历史报告的筛选：null = 全部项目。
+// 与上面的「选择项目」（用于勾执行记录）分开 —— 用一个下拉兼两件事，
+// 会让用户切了项目就看不到别的项目的报告，却不知道是筛选导致的。
+const reportProjectId = ref(null)
+
 // 勾选中的执行记录 id
 const selectedIds = ref([])
 
@@ -62,6 +67,7 @@ async function loadReports() {
   loading.value = true
   try {
     const data = await listReports({
+      project_id: reportProjectId.value ?? undefined,
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
     })
@@ -99,6 +105,12 @@ async function generate() {
 
 async function onProjectChange() {
   await loadExecutions()
+  await loadReports()
+}
+
+/** 换报告筛选条件回第 1 页：否则会停在新条件下不存在的页码上，看到空表 */
+async function onReportProjectChange() {
+  page.value = 1
   await loadReports()
 }
 
@@ -186,7 +198,18 @@ onMounted(async () => {
       <template #header>
         <div class="card-head">
           <span class="card-title">历史报告</span>
-          <span class="card-hint">共 {{ total }} 份 · 输出目录 reports/platform/</span>
+          <div class="card-tools">
+            <el-select
+              v-model="reportProjectId"
+              placeholder="全部项目"
+              clearable
+              style="width: 170px"
+              @change="onReportProjectChange"
+            >
+              <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <span class="card-hint">共 {{ total }} 份 · 输出目录 reports/platform/</span>
+          </div>
         </div>
       </template>
 
@@ -242,6 +265,12 @@ onMounted(async () => {
 .card-hint {
   font-size: 12px;
   color: var(--text-3);
+}
+
+.card-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .actions {

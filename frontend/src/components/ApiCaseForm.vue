@@ -102,6 +102,22 @@ const EXTRACT_SOURCES = [
         </div>
       </el-form-item>
 
+      <!-- 查询参数与请求头同构：都是 key/value 行。
+           AI 生成的用例一直带 params_json，此前界面上既看不见也改不了，
+           执行时也不会发出去（整条链路静默失效）。 -->
+      <el-form-item label="查询参数">
+        <div class="rows-editor">
+          <div v-for="(row, index) in form.params" :key="index" class="kv-row">
+            <el-input v-model="row.key" placeholder="参数名" />
+            <el-input v-model="row.value" placeholder="支持 ${变量}" />
+            <el-button link type="danger" @click="form.params.splice(index, 1)">移除</el-button>
+          </div>
+          <el-button link type="primary" @click="form.params.push({ key: '', value: '' })">
+            + 添加查询参数
+          </el-button>
+        </div>
+      </el-form-item>
+
       <el-form-item label="认证">
         <div class="auth-row">
           <el-select v-model="form.auth_type" class="auth-select">

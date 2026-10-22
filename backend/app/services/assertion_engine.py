@@ -17,10 +17,21 @@ def evaluate(response, elapsed_ms: float, atype: str, op: str, expected: str, ta
 
     atype: status_code / response_time / response_body
     op:    eq / ne / contains / regex / lt / gt
+
+    期望值解析失败按「断言失败」处理，不按「执行错误」：期望值是用户自由输入的
+    字符串，写成 `abc` / `200ms` 是配置问题，不该让整条执行抛异常变 500，
+    也不该把用例状态从 fail 升级成 error。
     """
     if atype == "status_code":
         actual = response.status_code
-        expected_int = int(expected)
+        try:
+            expected_int = int(str(expected).strip())
+        except (TypeError, ValueError):
+            return {
+                "passed": False,
+                "message": f"断言配置有误：期望值 {expected!r} 不是合法数字，请检查用例的断言条件",
+                "actual": str(actual),
+            }
         if op == "ne":
             passed = actual != expected_int
         else:
@@ -30,7 +41,14 @@ def evaluate(response, elapsed_ms: float, atype: str, op: str, expected: str, ta
 
     if atype == "response_time":
         actual = f"{elapsed_ms:.0f}"
-        expected_float = float(expected)
+        try:
+            expected_float = float(str(expected).strip())
+        except (TypeError, ValueError):
+            return {
+                "passed": False,
+                "message": f"断言配置有误：期望值 {expected!r} 不是合法数字，请检查用例的断言条件",
+                "actual": actual,
+            }
         if op == "gt":
             passed = elapsed_ms > expected_float
         else:

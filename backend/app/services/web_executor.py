@@ -278,8 +278,53 @@ DEFAULT_CASE_TIMEOUT = 300    # 整条用例的保险丝，防止把 worker 占�
 MAX_WAIT_SECONDS = 60         # 单步强制等待上限
 MAX_CLICKS_RETRY = 2
 
-# 限制同时拉起的浏览器数量：前端连点多次时，不会一次开出一堆 Chrome
-_BROWSER_SEMAPHORE = threading.Semaphore(2)
+# ---------- 浏览器并发闸门 ----------
+# 限制同时拉起的浏览器数量：前端连点多次、或两个人同时执行时，
+# 不会一次开出一堆 Chrome 把机器拖死。
+# 用 BoundedSemaphore（而不是 Semaphore）：多 release 一次会直接报错，
+# 「异常路径漏 release / 重复 release」能被立刻发现，而不是把配额悄悄放大。
+_slot_lock = threading.Lock()
+_slot_sem: threading.BoundedSemaphore | None = None
+_slot_size = 0
+_active_browsers = 0
+
+
+def _browser_slots() -> threading.BoundedSemaphore:
+    """懒创建信号量：读 settings 而非常量，测试里改配置能生效。"""
+    global _slot_sem, _slot_size
+    with _slot_lock:
+        if _slot_sem is None:
+            _slot_size = max(1, int(settings.web_max_concurrent_sessions))
+            _slot_sem = threading.BoundedSemaphore(_slot_size)
+        return _slot_sem
+
+
+def acquire_browser_slot(timeout: float) -> bool:
+    """占用一个浏览器配额，超时返回 False（调用方据此返回 error 结果）。"""
+    global _active_browsers
+    if not _browser_slots().acquire(timeout=max(0.0, timeout)):
+        return False
+    with _slot_lock:
+        _active_browsers += 1
+    return True
+
+
+def release_browser_slot() -> None:
+    global _active_browsers
+    with _slot_lock:
+        _active_browsers = max(0, _active_browsers - 1)
+    try:
+        _browser_slots().release()
+    except ValueError:
+        # 走到这里说明 release 次数多于 acquire，是代码缺陷，但不能因此中断执行
+        logger.warning("浏览器配额重复释放，已忽略")
+
+
+def browser_slot_status() -> dict:
+    """给 /web/status 用：当前占用的实例数与上限。"""
+    _browser_slots()  # 确保 _slot_size 已初始化
+    with _slot_lock:
+        return {"active_sessions": _active_browsers, "max_sessions": _slot_size}
 
 
 def _locator_text(step: dict, prefix: str = "") -> str:
@@ -816,14 +861,20 @@ def execute_case(case: dict, environment: dict | None = None, browser: str = "ch
 
     own_driver = driver is None
     if own_driver:
-        # 限量信号量只在自建 driver 时占用，避免与外部传入的 driver 抢配额
-        _BROWSER_SEMAPHORE.acquire()
+        # 配额只在自建 driver 时占用，避免与外部传入的 driver 抢配额。
+        # 等不到配额就返回 error 结果，而不是无限阻塞请求线程 ——
+        # 前端会看到「已有 N 个浏览器在执行」，知道该怎么办。
+        if not acquire_browser_slot(settings.web_browser_wait_seconds):
+            max_sessions = browser_slot_status()["max_sessions"]
+            result["error_msg"] = f"当前已有 {max_sessions} 个浏览器在执行，请稍后重试"
+            result["duration_ms"] = int((time.time() - started) * 1000)
+            return result
         try:
             driver = create_driver(browser, headless)
         except Exception as e:
             result["error_msg"] = f"浏览器启动失败: {type(e).__name__}: {str(e)[:300]}"
             result["duration_ms"] = int((time.time() - started) * 1000)
-            _BROWSER_SEMAPHORE.release()
+            release_browser_slot()
             return result
 
     shot_dir = Path(screenshot_dir or settings.screenshot_dir)
@@ -898,7 +949,9 @@ def execute_case(case: dict, environment: dict | None = None, browser: str = "ch
                 driver.quit()
             except Exception:
                 logger.warning("关闭浏览器失败", exc_info=True)
-            _BROWSER_SEMAPHORE.release()
+            # 放在 finally 里释放：中途抛异常也一定会还配额，
+            # 漏一次就会让后续执行永久少一个名额。
+            release_browser_slot()
 
     result["extracted"] = runner.extracted
     # extract_errors 与 api_executor 同名同义（响应体提取失败原因），Web 侧没有这个概念；

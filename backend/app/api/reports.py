@@ -3,10 +3,11 @@
 报告是「勾选若干执行记录 → 生成一份 HTML」的粒度，对应旧项目的
 report_generator.generate_from_results(result_ids)。文件落在 settings.report_dir。
 """
+import re
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -47,6 +48,8 @@ class ReportInfo(BaseModel):
     filename: str
     size: int
     created_at: str
+    # 从文件名里的 _p{id}_ 解析；老格式（Day 13 之前的报告）解析不出就是 null
+    project_id: int | None = None
 
 
 def _report_dir() -> Path:
@@ -93,8 +96,24 @@ def create_report(project_id: int, payload: ReportCreate, db: Session = Depends(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
+_PROJECT_IN_FILENAME = re.compile(r"_p(\d+)_")
+
+
+def _project_id_of(filename: str) -> int | None:
+    """从 report_api_p29_r318_....html 里取出 29；老格式返回 None。
+
+    解析而不是查库：报告本身在磁盘上，没有外键可依；
+    解析失败只影响「按项目筛选」这一项，不该让列表整个 500。
+    """
+    match = _PROJECT_IN_FILENAME.search(filename)
+    return int(match.group(1)) if match else None
+
+
 @router.get("/reports", response_model=Page[ReportInfo], summary="已生成的报告列表（分页）")
-def list_reports(page: PageParams = Depends()):
+def list_reports(
+    project_id: int | None = Query(None, description="按项目筛选；不传则列出全部"),
+    page: PageParams = Depends(),
+):
     files = []
     for path in _report_dir().glob("*.html"):
         stat = path.stat()
@@ -102,9 +121,13 @@ def list_reports(page: PageParams = Depends()):
             "filename": path.name,
             "size": stat.st_size,
             "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+            "project_id": _project_id_of(path.name),
         })
     # 新的排前面
     files.sort(key=lambda f: f["created_at"], reverse=True)
+
+    if project_id is not None:
+        files = [f for f in files if f["project_id"] == project_id]
 
     # 数据来自磁盘、一次就全读出来了，分页在这里只是内存切片 —— 不用 paginate()
     # （那个是给数据库查询用的，要单独 count 一次）

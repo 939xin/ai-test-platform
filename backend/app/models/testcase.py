@@ -49,10 +49,15 @@ class TestCase(Base):
     login_case: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     needs_login: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
-    # ---------- 前置/后置脚本、数据驱动 ----------
+    # ---------- 数据驱动 ----------
+    data_file: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    # ---------- 已废弃（deprecated，决策 D1）----------
+    # API 已不再暴露这两个字段（见 schemas/testcase.py 的同名注释）。
+    # 列保留：删列不可逆，且 _ADDED_COLUMNS 那套机制只支持加列、没有删列的登记位。
+    # 不写 ALTER TABLE ... DROP COLUMN —— 历史数据留着比清爽更重要。
     pre_script: Mapped[str] = mapped_column(Text, nullable=False, default="")
     post_script: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    data_file: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

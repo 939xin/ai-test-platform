@@ -33,7 +33,7 @@ from app.schemas.plan import (
     RunPlanRequest,
 )
 from app.services import web_executor, web_session
-from app.services.api_executor import execute_case
+from app.services.api_executor import error_result, execute_case
 
 router = APIRouter()
 
@@ -194,6 +194,39 @@ def delete_plan(plan_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
+def _run_web_case(db: Session, case: TestCase, env_dict: dict, execution: Execution,
+                  payload: RunPlanRequest) -> dict:
+    """跑计划里的一条 Web 用例。
+
+    异常在**本函数内**兜住，为的是保证 finish_case 无论成败都被调用：
+    它负责导出登录态、补 missing/expired，跳过会让「登录用例在计划里跑通了
+    却没存下状态」这种问题很难查。
+    """
+    # 登录态与单条执行同源：同一条登录用例、同一份状态，两条路径不各写一套
+    session_state, session_row = web_session.prepare_for_case(db, case)
+
+    # 截图按执行记录分目录，与单条执行保持同样的落盘结构
+    shot_dir = Path(settings.report_dir) / "screenshots" / f"execution_{execution.id}"
+    started = datetime.now()
+    try:
+        result = web_executor.execute_case(
+            case_to_dict(case), env_dict,
+            browser=payload.browser,
+            headless=payload.headless,
+            timeout=payload.web_timeout,
+            screenshot_dir=str(shot_dir),
+            screenshot_root=settings.report_dir,
+            session_state=session_state,
+            capture_session=case.login_case,
+        )
+    except Exception as e:
+        result = error_result(e, int((datetime.now() - started).total_seconds() * 1000))
+        result.update({"steps": [], "session": web_session.empty_session_info()})
+
+    web_session.finish_case(db, case, result, session_row)
+    return result
+
+
 def _run_one(db: Session, case: TestCase, env_dict: dict, *, plan_id: int,
              payload: RunPlanRequest) -> Execution:
     """执行计划里的一条用例并落库，按用例类型分派到接口 / Web 引擎。
@@ -213,36 +246,30 @@ def _run_one(db: Session, case: TestCase, env_dict: dict, *, plan_id: int,
     db.commit()
     db.refresh(execution)
 
-    if case.type == "web":
-        steps = [s for s in (case.steps_json or []) if s.get("enabled", True)]
-        if not steps:
-            result = {
-                "status": "error",
-                "duration_ms": 0,
-                "error_msg": "该 Web 用例还没有配置可执行的步骤",
-                "steps": [],
-                # 与真正跑过一轮的结果保持同一副骨架，前端不用为这种情况写分支
-                "session": web_session.empty_session_info(),
-            }
+    started = datetime.now()
+    try:
+        if case.type == "web":
+            steps = [s for s in (case.steps_json or []) if s.get("enabled", True)]
+            if steps:
+                result = _run_web_case(db, case, env_dict, execution, payload)
+            else:
+                result = {
+                    "status": "error",
+                    "duration_ms": 0,
+                    "error_msg": "该 Web 用例还没有配置可执行的步骤",
+                    "steps": [],
+                    # 与真正跑过一轮的结果保持同一副骨架，前端不用为这种情况写分支
+                    "session": web_session.empty_session_info(),
+                }
         else:
-            # 登录态与单条执行同源：同一条登录用例、同一份状态，两条路径不各写一套
-            session_state, session_row = web_session.prepare_for_case(db, case)
-
-            # 截图按执行记录分目录，与单条执行保持同样的落盘结构
-            shot_dir = Path(settings.report_dir) / "screenshots" / f"execution_{execution.id}"
-            result = web_executor.execute_case(
-                case_to_dict(case), env_dict,
-                browser=payload.browser,
-                headless=payload.headless,
-                timeout=payload.web_timeout,
-                screenshot_dir=str(shot_dir),
-                screenshot_root=settings.report_dir,
-                session_state=session_state,
-                capture_session=case.login_case,
-            )
-            web_session.finish_case(db, case, result, session_row)
-    else:
-        result = execute_case(case_to_dict(case), env_dict, timeout=payload.timeout)
+            result = execute_case(case_to_dict(case), env_dict, timeout=payload.timeout)
+    except Exception as e:
+        # 这一条炸了只让这一条变 error，后面几条照跑 —— 计划是批量场景，
+        # 一条用例自身的问题不该中止整批（本函数 docstring 早已这样承诺）。
+        # 同时保证记录不会停在 running。
+        result = error_result(e, int((datetime.now() - started).total_seconds() * 1000))
+        if case.type == "web":
+            result.update({"steps": [], "session": web_session.empty_session_info()})
 
     execution.status = result["status"]
     execution.end_time = datetime.now()

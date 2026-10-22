@@ -26,7 +26,7 @@ from app.schemas.execution import (
     RunWebRequest,
 )
 from app.services import web_executor, web_session
-from app.services.api_executor import execute_case
+from app.services.api_executor import error_result, execute_case
 from app.services.dataset import load_rows
 
 router = APIRouter()
@@ -35,8 +35,9 @@ router = APIRouter()
 def case_to_dict(case) -> dict:
     """把 ORM 用例转成执行引擎认识的字典。
 
-    接口执行只读前 9 个键；type / steps_json 是给 Web 执行引擎用的，
-    多带两个键对接口用例没有影响。
+    接口执行只读请求/断言那几项；type / steps_json 是给 Web 执行引擎用的，
+    多带几个键对接口用例没有影响。params_json 一定要带 —— 少了它，
+    用例里配的查询参数会被静默丢弃（AI 生成的用例正好都带这一项）。
 
     公开函数：api/plans.py 批量执行计划时复用同一套转换。
     """
@@ -45,6 +46,7 @@ def case_to_dict(case) -> dict:
         "method": case.method,
         "url": case.url,
         "headers_json": case.headers_json or {},
+        "params_json": case.params_json or {},
         "body_type": case.body_type,
         "body_content": case.body_content,
         "auth_type": case.auth_type,
@@ -86,6 +88,7 @@ def execution_out(
         id=execution.id,
         project_id=execution.project_id,
         plan_id=execution.plan_id,
+        scenario_id=execution.scenario_id,
         case_id=execution.case_id,
         case_name=case_name,
         case_type=case_type,
@@ -126,7 +129,14 @@ def run_case(
     db.commit()
     db.refresh(execution)
 
-    result = execute_case(case_to_dict(case), env_dict, timeout=payload.timeout)
+    started = datetime.now()
+    try:
+        result = execute_case(case_to_dict(case), env_dict, timeout=payload.timeout)
+    except Exception as e:
+        # 执行器里的任何异常都必须在**这里**兜住：记录已经写成 running 了，
+        # 继续往上抛会让它永远停在 running —— 前端一直转圈，也没有任何
+        # 后续请求会再来改它。
+        result = error_result(e, int((datetime.now() - started).total_seconds() * 1000))
 
     execution.status = result["status"]
     execution.end_time = datetime.now()
@@ -187,17 +197,24 @@ def run_web_case(
 
     # 截图按执行记录分目录，文件名全 ASCII，避开中文路径在驱动侧的各种坑
     shot_dir = Path(settings.report_dir) / "screenshots" / f"execution_{execution.id}"
-    result = web_executor.execute_case(
-        case_to_dict(case), env_dict,
-        browser=payload.browser,
-        headless=payload.headless,
-        timeout=payload.timeout,
-        screenshot_dir=str(shot_dir),
-        screenshot_root=settings.report_dir,
-        session_state=session_state,
-        capture_session=case.login_case,
-    )
+    started = datetime.now()
+    try:
+        result = web_executor.execute_case(
+            case_to_dict(case), env_dict,
+            browser=payload.browser,
+            headless=payload.headless,
+            timeout=payload.timeout,
+            screenshot_dir=str(shot_dir),
+            screenshot_root=settings.report_dir,
+            session_state=session_state,
+            capture_session=case.login_case,
+        )
+    except Exception as e:
+        # 与接口执行同一口径：异常也要落成一条 error 结果，不能停在 running
+        result = error_result(e, int((datetime.now() - started).total_seconds() * 1000))
+        result.update({"steps": [], "session": web_session.empty_session_info()})
 
+    # 无论成败都要走 finish_case：它负责 pop 掉 _captured_session 并补 missing/expired
     web_session.finish_case(db, case, result, session_row)
 
     execution.status = result["status"]
@@ -257,7 +274,12 @@ def run_case_data_driven(
 
         # 行数据覆盖全局变量：{**全局, **当前行}
         merged_env = {**env_dict, "variables_json": {**global_vars, **row}}
-        result = execute_case(case_to_dict(case), merged_env, timeout=payload.timeout)
+        started = datetime.now()
+        try:
+            result = execute_case(case_to_dict(case), merged_env, timeout=payload.timeout)
+        except Exception as e:
+            # 与单条执行同一口径：这一行失败只让这一行变 error，后面几行照跑
+            result = error_result(e, int((datetime.now() - started).total_seconds() * 1000))
         result["row_index"] = index
         result["row_data"] = row
 
@@ -282,7 +304,8 @@ def run_case_data_driven(
 
 
 def _execution_filters(
-    project_id: int | None, case_id: int | None, status_value: str | None
+    project_id: int | None, case_id: int | None, status_value: str | None,
+    scenario_id: int | None = None,
 ) -> list:
     """列表与统计接口共用的筛选条件。
 
@@ -293,6 +316,8 @@ def _execution_filters(
         conds.append(Execution.project_id == project_id)
     if case_id is not None:
         conds.append(Execution.case_id == case_id)
+    if scenario_id is not None:
+        conds.append(Execution.scenario_id == scenario_id)
     if status_value:
         conds.append(Execution.status == status_value)
     return conds
@@ -304,6 +329,7 @@ def _execution_filters(
 def execution_stats(
     project_id: int | None = Query(None),
     case_id: int | None = Query(None),
+    scenario_id: int | None = Query(None),
     status: str | None = Query(None, description="按执行状态筛选：pass / fail / error / running"),
     db: Session = Depends(get_db),
 ):
@@ -312,7 +338,7 @@ def execution_stats(
     执行中心的统计卡原来拿加载到的那一页在算，分页之后会变成「翻一页数字就变」——
     所以统计口径必须落在这里，而不是前端对当前页 reduce。
     """
-    conds = _execution_filters(project_id, case_id, status)
+    conds = _execution_filters(project_id, case_id, status, scenario_id)
     stmt = select(Execution.status, func.count()).group_by(Execution.status)
     if conds:
         stmt = stmt.where(*conds)
@@ -330,12 +356,13 @@ def execution_stats(
 def list_executions(
     project_id: int | None = Query(None),
     case_id: int | None = Query(None),
+    scenario_id: int | None = Query(None, description="按场景筛选（场景执行产生的记录）"),
     status: str | None = Query(None, description="按执行状态筛选：pass / fail / error / running"),
     page: PageParams = Depends(),
     db: Session = Depends(get_db),
 ):
     stmt = select(Execution)
-    conds = _execution_filters(project_id, case_id, status)
+    conds = _execution_filters(project_id, case_id, status, scenario_id)
     if conds:
         stmt = stmt.where(*conds)
 
@@ -348,6 +375,7 @@ def list_executions(
         ExecutionBrief(
             id=row.id,
             project_id=row.project_id,
+            scenario_id=row.scenario_id,
             case_id=row.case_id,
             case_name=name_map.get(row.case_id),
             case_type=type_map.get(row.case_id),

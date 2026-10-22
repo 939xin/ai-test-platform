@@ -47,6 +47,13 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "login_case": "TINYINT(1) NOT NULL DEFAULT 0",
         "needs_login": "TINYINT(1) NOT NULL DEFAULT 0",
     },
+    "execution": {
+        # 场景执行归属。已有库补列时顺带建索引：这张表会长得很快，
+        # 「按场景查历史」没有索引就是全表扫。
+        # 外键约束不在补列里加 —— 存量库可能已有脏数据，先让列可用，
+        # 全新库由模型声明自己建。
+        "scenario_id": "INT NULL, ADD INDEX `ix_execution_scenario_id` (`scenario_id`)",
+    },
 }
 
 

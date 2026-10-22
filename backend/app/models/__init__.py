@@ -4,6 +4,7 @@
 """
 from app.models.core import Environment, Project, User
 from app.models.execution import AITask, Defect, Execution
+from app.models.perf import PerfRun, PerfTask
 from app.models.testcase import Scenario, ScenarioStep, TestCase, TestPlan, TestPlanCase
 from app.models.websession import WebSession
 
@@ -20,4 +21,6 @@ __all__ = [
     "Defect",
     "AITask",
     "WebSession",
+    "PerfTask",
+    "PerfRun",
 ]

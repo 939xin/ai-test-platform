@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 说明 | 状态 |
 |---|---|---|
-| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–12） |
+| `backend/` + `frontend/` | **新** 鑫测试平台（FastAPI + Vue3 + MySQL） | 开发中（已完成 Day 1–13） |
 | `app/` + `main.py` 等 | **旧** PySide6 桌面版 | 冻结，作为引擎复用源 |
 
 新工程的执行引擎（`backend/app/services/`）大量复用旧桌面版 `app/engine`、`app/utils`
@@ -66,7 +66,7 @@ frontend (Vue3 + Element Plus, 5173)
     │  axios  /api/*  →  vite proxy
 backend  (FastAPI, 8000)
     ├── api/        路由
-    ├── models/     SQLAlchemy ORM（11 张表）
+    ├── models/     SQLAlchemy ORM（14 张表）
     ├── schemas/    Pydantic 请求 / 响应模型
     └── services/   ★ 执行引擎，复用自旧桌面版
                     assertion_engine / variable_resolver / api_executor
@@ -90,7 +90,7 @@ MySQL 8 (Docker, 3307)
 ### 全站鉴权（Day 8 起）
 
 接口已统一校验 JWT，**守卫不挂在各个路由函数上**，而是集中在 `main.py` 的
-`include_router(..., dependencies=guard)` —— 这样 11 个路由模块一行都不用改，
+`include_router(..., dependencies=guard)` —— 这样各路由模块一行都不用改，
 豁免清单也只在 `main.py` 一处看得见。
 
 - 依赖实现：`api/deps.py` 的 `get_current_user`（验签 + 确认 `sub` 用户还在）
@@ -102,6 +102,11 @@ MySQL 8 (Docker, 3307)
   任何前端写法都带不上 `Authorization` 头。这两条路由各自有 `../` 越界防护兜底
 - 前端登录态在 `api/session.js`（单独一层是为了避开 `auth ↔ request` 循环引用）；
   `request.js` 收到 401 会清登录态并整页跳登录页
+- ⚠️ **`user.role` 是保留字段，全库没有任何鉴权点**（决策 D4-A：本项目定位为单机 / 单用户工具）。
+  所有登录用户权限相同 —— 能删任何项目、能对任意地址发起压测。
+  **不要基于 `role` 写分支**：没有守卫去执行它，写出来的 `if` 永远为真，
+  只会让人以为平台有一套权限系统。真要加权限，必须**同一次改动里**在 `api/deps.py`
+  补 `require_admin` / `require_project_role` 并挂到路由上，否则等于没做。完整 RBAC 见功能单 F3-4
 
 ### 列表分页（Day 9 起）
 
@@ -172,7 +177,7 @@ DeepSeek 接入，两个端点：`POST /api/ai/generate-cases`、`POST /api/ai/a
 - **回显前先脱敏**：数据库地址只回 scheme / host / port / 库名 / 用户，**不回密码**；
   AI 只回「配没配」的布尔值，**不回 key**。这些字段都会渲染到页面上
   （还进浏览器历史与截图），验收里有两条断言扫 `test123456` 与 `sk-`
-- **版本号的唯一来源是 `main.py` 的 `app.version`**（当前 `2.0.0`），
+- **版本号的唯一来源是 `main.py` 的 `app.version`**（当前 `2.1.1`），
   设置页读它，不在前端再写一份
 - 驱动检测走 `check_browser()` 的**廉价探测**：只看浏览器装没装、驱动缓存目录能不能写，
   **不启动浏览器也不下载驱动**。代价是**拿不到版本号**，页面显示可执行文件路径。
@@ -225,6 +230,37 @@ DeepSeek 接入，两个端点：`POST /api/ai/generate-cases`、`POST /api/ai/a
 往已有表加字段要把 DDL 登记到 `database._ADDED_COLUMNS`，由 `ensure_schema()`
 在启动时幂等补齐。这仍是过渡手段，表结构再稳定些应整体换成 Alembic。
 
+### 性能测试（Day 13 起）
+
+接口压测是**独立模块**，不复用 `execution` 表：`perf_task` 存任务配置，`perf_run` 存一次运行。
+功能执行是「一条用例跑一次、带断言」；压测是「一个任务跑 N 个请求」，
+状态机、结果结构与统计口径完全不同，混用会污染执行中心。
+
+- 引擎 `services/perf_runner.py`：`ThreadPoolExecutor` + **每线程独立 `requests.Session`**，
+  复用 `api_executor.build_request()` 与变量解析；响应体 `stream=True` 分块读取后丢弃
+- **只校验 HTTP 状态码**（用例有 `status_code=eq` 断言就按它，否则 2xx/3xx），
+  不跑响应体断言 —— JSONPath 解析会污染延迟指标
+- 采样只存「每线程分片 + 固定分桶直方图 + 1 秒时间线 + 最多 10 条错误样本」，
+  **不存每条请求明细**；百分位是桶内插值近似值，界面已标注
+- `POST /perf-tasks/{id}/run` 只创建 `perf_run` 并启动后台协调线程，立即返回 202；
+  前端轮询 `/perf-runs/{id}/progress`
+- ⚠️ 后台线程**禁止复用请求内的 SQLAlchemy Session**，所有写库走 `SessionLocal()`。
+  心跳每秒只更新计数与 `last_heartbeat_at`，**不改 status** ——
+  否则用户点的 `stopping` 会被下一拍覆盖回 `running`
+- 停止是协作式的：在途请求最多再等一个请求超时；终态
+  `completed / stopped / aborted / failed`
+- 同一进程同时只允许 1 个压测（`perf_max_active_runs`）；所有上限集中在
+  `config.py`，前端通过 `GET /api/perf-limits` 读取，不允许两边各写一份
+- 启动前必须 `authorization_confirmed=true`，服务端同样校验并记录 `authorized_by`
+- **进程重启后遗留的非终态运行由 lifespan 的 `reap_stale_runs()` 标记 failed**，
+  保留已落库计数的 partial 指标。前提是**单 uvicorn worker** ——
+  取消与实时进度依赖进程内注册表
+- 请求快照与错误样本都要脱敏：不存 Authorization / Cookie / 密码 / 请求体原文
+- Web UI 压测**刻意不做**：浏览器成本远高于服务端请求，测到的是渲染成本
+
+> 验收靶子是 `GET /api/perf-target/echo?delay_ms=&status=&size=`（挂 guard，
+> 延迟用 `asyncio.sleep`），保证 Day 13 一段完全本机、不出网。
+
 ### 前端规范（用户明确要求，必须遵守）
 
 **所有前端页面必须优先使用现有前端 Skill 和 `frontend/src/components/` 下的公共组件，禁止引入新的 UI 库。**
@@ -241,11 +277,25 @@ DeepSeek 接入，两个端点：`POST /api/ai/generate-cases`、`POST /api/ai/a
 
 ## 项目概述
 
-**接口自动化测试工具** — Windows 桌面应用，提供接口测试（pytest + requests）和 Web UI 测试（Selenium）两大功能。
+> **本项目是「单机 / 单用户工具」，不是多租户平台。**（决策 D4-A，2026-10-22 定稿，
+> 见 `docs/technical/修复任务单.md` 第 4 节）
+>
+> 含义：`user.role` 字段**保留但没有任何权限判断** —— 所有登录用户能看到的、能改的东西完全一样。
+> JWT 只解决「谁在操作、请求有没有带令牌」，**不解决「谁能动哪个项目」**。
+> 所以：**不要对外承诺多用户隔离**，也**不要基于 `role` 写分支逻辑**（写了也没有守卫去执行它，
+> 只会让人以为存在一套权限系统）。真要做 RBAC 是一次独立改造，见功能单 F3-4，
+> 不是在现有代码里加几行 `if user.role == "admin"` 能凑出来的。
 
-- 技术栈：PySide6 + pytest + Selenium + SQLite
-- 目标用户：软件测试人员
-- UI 风格：实用为主，蓝色主题
+本仓库有两套代码，**别混着看**：
+
+| | 新平台（在维护） | 旧桌面版（已冻结） |
+|---|---|---|
+| 目录 | `backend/` + `frontend/` | `app/` + `main.py` |
+| 技术栈 | FastAPI + Vue3(Element Plus) + MySQL 8 | PySide6 + pytest + Selenium + SQLite |
+| 用途 | 当前开发目标 | 只作为执行引擎的复用源 |
+
+新平台面向软件测试人员：接口自动化、Web UI 自动化、场景 / 计划、缺陷管理、压力测试、AI 辅助。
+UI 风格：深青蓝主题、实用为主（令牌在 `frontend/src/styles/variables.css`）。
 
 ---
 
@@ -439,18 +489,22 @@ UI 层 (PySide6)          用户操作 → 写 DB
 
 > 按优先级排列，修一个划一个。详细背景见 `dev_logs/` 与 `time/CHANGELOG.md`。
 
-### 新平台（当前在做，Day 9 逐条核对过代码）
+### 新平台（当前在做，Day 13 逐条核对过代码）
 
 按投入产出比排，**完整版与核实方式见 `time/CHANGELOG.md` 的「待规划」**：
 
 1. ✅ **列表分页** —— 已完成（Day 9）。6 个会长的接口改 `{ items, total }`，
    项目 / 环境 / 数据集保持裸数组。契约见上文「列表分页」一节
 2. ✅ **设置页** —— 已完成（Day 11）。账号 / 驱动检测 / 系统参数，见上文「设置页」一节
-3. 📝 **无 Setup / Teardown**（前置 + 后置步骤）—— 全后端无实现
+3. 📝 **无 Setup / Teardown**（前置 + 后置步骤）—— 全后端无实现。
+   `test_case` 表原有的 `pre_script` / `post_script` 两列已**废弃**（API 不再暴露、
+   模型列保留不删），因为「让用户写 Python」等于给平台开 RCE 口子。
+   将来用「前置/后置**用例**引用」实现，不要复活脚本字段
 4. 📝 **缺陷无附件 / 评论 / 指派** —— ⚠️ 表里没有这些字段，**要先改表**
 5. 📝 **无用例导入 / 导出**（JSON / Excel）
 6. 📝 **Web 用例不支持场景串联 / 数据驱动** —— 这两条链路只走接口执行器
-7. 📝 **接口用例串行执行** —— 无并发
+7. 📝 **功能执行仍是串行** —— 计划 / 场景 / 数据驱动逐条跑；性能测试模块（Day 13）
+   有独立的并发引擎，但只用于压测，不复用到功能执行链路
 8. 📝 **前后端没一起 Docker 化** —— 只有数据库跑了 compose
 9. 📝 **窄视口表格横向溢出** —— 操作列已 `fixed="right"` 保证可点，整体仍需横向滚动
 10. 📝 **pytest 脚本导出未搬** —— 旧桌面版 `script_generator.py` 新平台 0 处引用
@@ -465,8 +519,12 @@ Web UI 执行已迁移（Day 4）、`_capture_screenshot()` 老 bug 已修（Day
 **全站 JWT 校验 + 登录页**已实现（Day 8）、**列表分页 + 执行统计接口**已实现（Day 9）、
 **AI 辅助（用例生成 / 失败分析）**已实现（Day 10，见上文「AI 辅助」一节）、
 **设置页**已实现（Day 11，见上文「设置页」一节）、
-**Web 登录态复用**已实现（Day 12，见上文「Web 登录态复用」一节）——
-**侧栏 11 个页面至此全部有实际内容，占位页清零**。
+**Web 登录态复用**已实现（Day 12，见上文「Web 登录态复用」一节）、
+**性能测试（接口压测）**已实现（Day 13，见上文「性能测试」一节）——
+**侧栏 12 个页面至此全部有实际内容，占位页清零**。
+Day 13 的做法与边界：独立 `perf_task` / `perf_run` 两张表、后台线程 + 每秒心跳、
+固定分桶直方图、只校验状态码、单进程单活跃运行、授权确认、请求快照脱敏；
+验收新增 38 项（总数 243），靶子走本机 `/api/perf-target/echo`，不出网。
 Day 12 顺手修掉 `${base_url}` 变量注入：`open_url` 与 `ApiCaseForm` 的字段提示
 都写着「支持 `${base_url}`」，但两边都只注入了 `variables_json`。
 **接口侧同日跟进修复，两侧口径已对齐**：`api_executor.execute_case()` 现在把

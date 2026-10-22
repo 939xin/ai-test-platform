@@ -12,7 +12,7 @@ from app.api.projects import get_project_or_404
 from app.config import settings
 from app.database import get_db
 from app.schemas.dataset import DatasetInfo, DatasetPreview
-from app.services.dataset import dataset_dir, describe, load_rows, resolve_path
+from app.services.dataset import dataset_dir, describe, invalidate, load_rows, resolve_path
 
 router = APIRouter()
 
@@ -47,6 +47,9 @@ async def upload_dataset(
 
     dataset_dir(project_id).mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
+    # 同名覆盖上传后元信息必须立刻失效；虽然缓存键含 mtime/size，
+    # 但旧键不主动清掉会一直占着内存
+    invalidate(project_id, path.name)
 
     # 落盘后立刻解析一次：格式不对、只有表头这类问题要当场报错，不能等到执行时才炸
     try:
@@ -117,3 +120,4 @@ def delete_dataset(project_id: int, filename: str, db: Session = Depends(get_db)
     if not path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据文件不存在")
     path.unlink()
+    invalidate(project_id, path.name)

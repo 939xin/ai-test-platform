@@ -3,6 +3,13 @@ import { ElMessage } from 'element-plus'
 
 import { clearSession, getToken } from './session'
 
+/**
+ * ⚠️ 凡是"一次请求触发多步执行"的接口，必须显式传 timeout（见 api/timeouts.js）。
+ *
+ * 这里的 30 秒是给普通 CRUD 用的。长任务在 30 秒会被前端单方面掐断，
+ * 而后端还在继续跑，用户会在执行中心看到一条与自己刚才操作对不上的记录。
+ * 反过来也**不要**为了省事把这里整体调大：真挂掉的 CRUD 请求会让用户白等几分钟。
+ */
 const request = axios.create({
   baseURL: '/api',
   timeout: 30000,

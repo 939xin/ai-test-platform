@@ -6,7 +6,8 @@ export function createReport(projectId, data) {
 }
 
 /**
- * 已生成的报告列表，支持 { limit, offset }，返回 `{ items, total }`。
+ * 已生成的报告列表，支持 { project_id, limit, offset }，返回 `{ items, total }`。
+ * project_id 不传 = 全部项目（老报告文件名里没有项目段，解析不出 project_id）。
  *
  * 数据来自磁盘上的 HTML 文件而不是数据库，所以每项的标识是 filename（没有 id）。
  */

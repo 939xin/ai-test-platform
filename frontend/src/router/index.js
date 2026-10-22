@@ -36,6 +36,9 @@ const routes = [
 
       { path: 'scenarios', name: 'scenarios', component: () => import('@/views/ScenarioList.vue'), meta: { title: '场景测试' } },
       { path: 'plans', name: 'plans', component: () => import('@/views/PlanList.vue'), meta: { title: '测试计划' } },
+      { path: 'perf', name: 'perf', component: () => import('@/views/PerfTaskList.vue'), meta: { title: '性能测试' } },
+      { path: 'perf/runs', name: 'perf-runs', component: () => import('@/views/PerfRunList.vue'), meta: { title: '运行记录', parent: '性能测试' } },
+      { path: 'perf/runs/:runId(\\d+)', name: 'perf-run-detail', component: () => import('@/views/PerfRunDetail.vue'), meta: { title: '运行详情', parent: '性能测试' } },
       { path: 'executions', name: 'executions', component: () => import('@/views/ExecutionCenter.vue'), meta: { title: '执行中心' } },
       { path: 'reports', name: 'reports', component: () => import('@/views/ReportList.vue'), meta: { title: '测试报告' } },
       { path: 'defects', name: 'defects', component: () => import('@/views/DefectList.vue'), meta: { title: '缺陷管理' } },

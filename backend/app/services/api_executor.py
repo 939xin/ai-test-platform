@@ -2,11 +2,14 @@
 
 剥掉 QThread 和 DBManager，改成无状态的纯函数，供 FastAPI 直接调用。
 """
+import json
 import time
 
 import requests as http_requests
 
+from app.config import settings
 from app.services.assertion_engine import evaluate
+from app.services.sanitize import redact_headers
 from app.services.variable_resolver import VariableResolver
 
 try:
@@ -19,7 +22,12 @@ MAX_TIMEOUT = 120
 
 
 def build_request(case: dict, environment: dict, resolver: VariableResolver) -> tuple:
-    """构造请求三要素。返回 (method, full_url, headers, body, auth)。"""
+    """构造请求要素。返回 (method, full_url, headers, body, auth, params)。
+
+    params 交给 requests 的 `params=` 去编码，**不在这里手拼 query 字符串**：
+    手拼要自己处理转义、重复 key、中文编码，和 requests 编出来的结果必然有出入，
+    出问题时也对不上抓包看到的内容。
+    """
     method = (case.get("method") or "GET").upper()
 
     # 必须先解析变量、再判断要不要拼 base_url。
@@ -36,6 +44,14 @@ def build_request(case: dict, environment: dict, resolver: VariableResolver) -> 
     headers = {}
     for key, value in (case.get("headers_json") or {}).items():
         headers[key] = resolver.resolve(str(value))
+
+    # 查询参数：AI 生成的用例就带这一项，此前只存不发，整条链路静默失效
+    params = {}
+    for key, value in (case.get("params_json") or {}).items():
+        key = str(key).strip()
+        if not key:
+            continue
+        params[key] = resolver.resolve(str(value))
 
     auth_type = case.get("auth_type", "none")
     auth_value = case.get("auth_value") or ""
@@ -58,7 +74,27 @@ def build_request(case: dict, environment: dict, resolver: VariableResolver) -> 
         elif body_type == "xml":
             headers.setdefault("Content-Type", "application/xml")
 
-    return method, full_url, headers, body, auth_obj
+    return method, full_url, headers, body, auth_obj, params
+
+
+def error_result(exc: BaseException, duration_ms: int = 0) -> dict:
+    """把执行器抛出的异常包装成与正常返回**同一副骨架**的结果。
+
+    执行中心、报告、AI 分析都按这套键取值；缺键会让它们在异常场景下二次崩溃，
+    所以宁可填空值也不省略。状态用 error（不是 fail）：这是「没跑成」，
+    不是「跑成了但断言没过」，两者在执行中心要能区分。
+    """
+    return {
+        "status": "error",
+        "duration_ms": max(0, int(duration_ms)),
+        "request": {},
+        "response": {},
+        "assertions": [],
+        "extracted": {},
+        "extract_errors": [],
+        "response_truncated": False,
+        "error_msg": f"执行器异常: {type(exc).__name__}: {str(exc)[:150]}",
+    }
 
 
 def _extract_variables(response, rules: list) -> tuple[dict, list[str]]:
@@ -128,7 +164,7 @@ def execute_case(case: dict, environment: dict | None = None,
         **(environment.get("variables_json") or {}),
     }
     resolver = VariableResolver(global_vars=global_vars)
-    method, full_url, headers, body, auth_obj = build_request(case, environment, resolver)
+    method, full_url, headers, body, auth_obj, params = build_request(case, environment, resolver)
 
     actual_timeout = max(1, min(int(timeout or 30), MAX_TIMEOUT))
     start = time.time()
@@ -137,6 +173,9 @@ def execute_case(case: dict, environment: dict | None = None,
 
     try:
         kwargs = {"headers": headers, "timeout": actual_timeout, "verify": verify_ssl}
+        if params:
+            # 无参数时不传空 dict，保持请求干净（也便于和抓包逐项对照）
+            kwargs["params"] = params
         if auth_obj:
             kwargs["auth"] = auth_obj
         if body:
@@ -152,13 +191,30 @@ def execute_case(case: dict, environment: dict | None = None,
     elapsed_ms = (time.time() - start) * 1000
 
     # ---------- 响应快照 ----------
+    # JSON 与非 JSON 统一按 response_body_max_chars 截断，超限存一个带预览的标记对象。
+    # 不截 JSON 的话，一条 5MB 的响应会把 MySQL 的 JSON 列、报告 HTML、
+    # AI 分析上下文一起拖垮。
+    resp_truncated = False
     if response is not None:
         resp_status = response.status_code
         resp_headers = dict(response.headers)
         try:
             resp_body = response.json()
         except Exception:
-            resp_body = (response.text or "")[:5000]
+            text_body = response.text or ""
+            limit = settings.response_body_max_chars
+            resp_body = text_body[:limit]
+            resp_truncated = len(text_body) > limit
+        else:
+            serialized = json.dumps(resp_body, ensure_ascii=False, default=str)
+            limit = settings.response_body_max_chars
+            if len(serialized) > limit:
+                resp_body = {
+                    "_truncated": True,
+                    "_original_chars": len(serialized),
+                    "preview": serialized[:limit],
+                }
+                resp_truncated = True
     else:
         resp_status, resp_headers, resp_body = 0, {}, ""
 
@@ -203,10 +259,19 @@ def execute_case(case: dict, environment: dict | None = None,
     return {
         "status": status,
         "duration_ms": int(elapsed_ms),
-        "request": {"method": method, "url": full_url, "headers": headers, "body": body},
-        "response": {"status": resp_status, "headers": resp_headers, "body": resp_body},
+        # url 保持原始 URL，查询参数单列 —— 不伪造「实际发出的 URL」，
+        # requests 的编码规则与手拼不一致，前端分两行展示即可。
+        # 头里的 Authorization / Cookie / Set-Cookie 一律打码后才返回：
+        # 这份结果会永久留在执行历史、进报告 HTML、还会喂给 AI 做失败分析。
+        # 响应体**不动** —— 用例可能就要断言里面的 token 值。
+        "request": {"method": method, "url": full_url, "headers": redact_headers(headers),
+                    "params": params, "body": body},
+        "response": {"status": resp_status, "headers": redact_headers(resp_headers),
+                     "body": resp_body},
         "assertions": assertion_results,
         "extracted": extracted,
         "extract_errors": extract_errors,
+        # 前端据此提示「响应体过大已截断」——不提示的话，用户会以为接口真的只返回了这么点
+        "response_truncated": resp_truncated,
         "error_msg": error_msg,
     }

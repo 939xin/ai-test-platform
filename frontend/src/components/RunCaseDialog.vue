@@ -39,6 +39,14 @@ const headless = ref(true)
 const webTimeout = ref(300)
 // 本机没有可用浏览器时禁用执行，并直接说明原因
 const webBlocked = computed(() => isWeb.value && Boolean(webInfo.value) && !webInfo.value.available)
+// 浏览器并发名额已满时也禁用：后端会排队等一会儿再失败，不如点之前就说清楚
+const webBusy = computed(
+  () =>
+    isWeb.value
+    && Boolean(webInfo.value)
+    && webInfo.value.active_sessions >= webInfo.value.max_sessions,
+)
+const webDisabled = computed(() => webBlocked.value || webBusy.value)
 
 async function loadEnvironments() {
   if (props.projectId == null) return
@@ -47,7 +55,8 @@ async function loadEnvironments() {
 }
 
 async function loadWebInfo() {
-  if (!isWeb.value || webInfo.value) return
+  if (!isWeb.value) return
+  // 每次打开都重新取一次：active_sessions 是实时值，缓存下来会显示过期的空闲名额
   webInfo.value = await getWebStatus()
 }
 
@@ -111,7 +120,7 @@ watch(visible, (open) => {
         <el-select v-model="envId" placeholder="不使用环境" clearable style="width: 170px">
           <el-option v-for="e in environments" :key="e.id" :label="e.name" :value="e.id" />
         </el-select>
-        <el-button type="primary" :loading="running" :disabled="webBlocked" @click="run">
+        <el-button type="primary" :loading="running" :disabled="webDisabled" @click="run">
           开始执行
         </el-button>
       </div>
@@ -141,6 +150,15 @@ watch(visible, (open) => {
       :closable="false"
       class="web-blocked"
       :title="`本机没有可用的浏览器，无法执行：${webInfo.error}`"
+    />
+
+    <el-alert
+      v-else-if="webBusy"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="web-blocked"
+      :title="`当前已有 ${webInfo.active_sessions} 个浏览器在执行（上限 ${webInfo.max_sessions} 个），请等其中一条跑完再试`"
     />
 
     <div v-if="hasDataFile" class="data-driven-bar">

@@ -1,4 +1,5 @@
 import request from './request'
+import { LONG_TASK_TIMEOUT } from './timeouts'
 
 /**
  * 场景列表，支持 { limit, offset }，返回 `{ items, total }`。
@@ -28,7 +29,12 @@ export function deleteScenario(scenarioId) {
   return request.delete(`/scenarios/${scenarioId}`)
 }
 
-/** 执行场景，data 形如 { env_id, timeout }。 */
+/**
+ * 执行场景，data 形如 { env_id, timeout }。
+ *
+ * 场景是若干用例按顺序串起来的，整条链路可能跑好几分钟，
+ * 用默认的 30 秒会先被前端掐断。
+ */
 export function runScenario(scenarioId, data = {}) {
-  return request.post(`/scenarios/${scenarioId}/run`, data)
+  return request.post(`/scenarios/${scenarioId}/run`, data, { timeout: LONG_TASK_TIMEOUT })
 }

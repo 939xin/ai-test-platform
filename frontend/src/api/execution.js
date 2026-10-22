@@ -1,23 +1,31 @@
 import request from './request'
+import { API_TIMEOUT, LONG_TASK_TIMEOUT } from './timeouts'
 
-/** 执行单条用例，data 形如 { env_id, timeout }。 */
+/**
+ * 执行单条用例，data 形如 { env_id, timeout }。
+ *
+ * 接口用例本身也可能跑满后端上限（120 秒），所以不走默认 30 秒。
+ */
 export function runCase(caseId, data = {}) {
-  return request.post(`/cases/${caseId}/run`, data)
+  return request.post(`/cases/${caseId}/run`, data, { timeout: API_TIMEOUT })
 }
 
-/** 按数据文件逐行执行用例，返回 {total, passed, failed, rows}。 */
+/**
+ * 按数据文件逐行执行用例，返回 {total, passed, failed, rows}。
+ * 逐行串行执行，行数多时远超 30 秒。
+ */
 export function runCaseDataDriven(caseId, data = {}) {
-  return request.post(`/cases/${caseId}/run-data-driven`, data)
+  return request.post(`/cases/${caseId}/run-data-driven`, data, { timeout: LONG_TASK_TIMEOUT })
 }
 
 /**
  * 执行单条 Web UI 用例，data 形如 { env_id, browser, headless, timeout }。
  *
- * 单独放宽 axios 超时：起浏览器、等页面渲染、首次还要下驱动，远不止默认的 30 秒。
+ * 起浏览器、等页面渲染、首次还要下驱动，远不止默认的 30 秒。
  * 这里比后端整条用例的上限（1800 秒）再多一点缓冲，避免前端先断开连接。
  */
 export function runWebCase(caseId, data = {}) {
-  return request.post(`/cases/${caseId}/run-web`, data, { timeout: 1900000 })
+  return request.post(`/cases/${caseId}/run-web`, data, { timeout: LONG_TASK_TIMEOUT })
 }
 
 /**

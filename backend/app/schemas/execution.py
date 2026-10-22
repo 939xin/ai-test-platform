@@ -59,6 +59,7 @@ class ExecutionOut(BaseModel):
     id: int
     project_id: int
     plan_id: int | None
+    scenario_id: int | None = None  # 场景执行才有；单条执行与计划执行都是 null
     case_id: int | None
     case_name: str | None = None
     case_type: str | None = None  # api / web，由接口按 case_id 回查填充（执行表本身没有）
@@ -85,6 +86,7 @@ class ExecutionBrief(BaseModel):
 
     id: int
     project_id: int
+    scenario_id: int | None = None
     case_id: int | None
     case_name: str | None = None
     case_type: str | None = None

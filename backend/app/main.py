@@ -7,11 +7,13 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app.api import (
-    ai, auth, cases, datasets, defects, environments, executions, health, plans, projects, reports,
-    scenarios, system, web, web_sessions,
+    ai, auth, cases, datasets, defects, environments, executions, health, perf, perf_target,
+    plans, projects, reports, scenarios, system, web, web_sessions,
 )
 from app.api.deps import get_current_user
 from app.config import settings
+from app.services.execution_reaper import reap_stale_executions
+from app.services.perf_run_manager import perf_run_manager
 
 
 def init_database() -> None:
@@ -38,12 +40,19 @@ def init_database() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_database()
+    # 进程重启后，上一进程遗留的 queued/running/stopping 永远等不到结果，
+    # 启动时统一标成 failed（并把已落库的计数保留成 partial 指标）。
+    perf_run_manager.reap_stale_runs()
+    # 功能执行同理：上一个进程留下的 running 永远等不到终态，启动时按开始时间清扫
+    reap_stale_executions()
     yield
+    # 优雅关闭：停止所有活跃压测，最多等每个 worker 排空 3 秒
+    perf_run_manager.shutdown()
 
 
 # version 会被「设置」页的只读面板读出来展示（GET /system/info），
 # 所以这里要与 time/CHANGELOG.md 的版本号保持一致，别让它俩漂移。
-app = FastAPI(title="AI 辅助软件测试平台", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="AI 辅助软件测试平台", version="2.1.1", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,6 +88,9 @@ app.include_router(web.router, prefix="/api", tags=["web"], dependencies=guard)
 app.include_router(web_sessions.router, prefix="/api", tags=["web-sessions"], dependencies=guard)
 app.include_router(ai.router, prefix="/api", tags=["ai"], dependencies=guard)
 app.include_router(system.router, prefix="/api", tags=["system"], dependencies=guard)
+app.include_router(perf.router, prefix="/api", tags=["perf"], dependencies=guard)
+# 压测验收靶子也挂 guard：它能让目标 sleep / 返回大响应，不登录不能用
+app.include_router(perf_target.router, prefix="/api", tags=["perf-target"], dependencies=guard)
 
 # Web UI 测试的离线演示页。挂在 /api 之下，前端 vite proxy 和验收脚本的 BASE
 # 都不需要额外配置；StaticFiles 自带路径穿越防护，且演示页只读。

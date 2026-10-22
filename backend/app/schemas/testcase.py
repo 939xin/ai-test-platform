@@ -127,9 +127,10 @@ class TestCaseCreate(BaseModel):
     login_case: bool = False
     needs_login: bool = False
 
-    # ---------- 脚本与数据驱动 ----------
-    pre_script: str = ""
-    post_script: str = ""
+    # ---------- 数据驱动 ----------
+    # pre_script / post_script 已废弃（决策 D1）：平台不执行用户写的 Python，
+    # 接上它就是给被测系统开一个 RCE 入口。字段留在库里只为不丢历史数据，
+    # API 不再暴露。将来用「前置/后置用例引用」实现，而不是塞脚本。
     data_file: str = Field("", max_length=255)
 
 
@@ -158,8 +159,6 @@ class TestCaseUpdate(BaseModel):
     login_case: bool | None = None
     needs_login: bool | None = None
 
-    pre_script: str | None = None
-    post_script: str | None = None
     data_file: str | None = Field(None, max_length=255)
 
 
@@ -190,8 +189,6 @@ class TestCaseOut(BaseModel):
     login_case: bool
     needs_login: bool
 
-    pre_script: str
-    post_script: str
     data_file: str
 
     created_at: datetime

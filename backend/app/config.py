@@ -57,6 +57,36 @@ class Settings(BaseSettings):
     # app/static/demo/ —— 离线演示页，给验收脚本当靶页（httpbin 没有 UI，无法测 Web）
     demo_dir: str = str(BASE_DIR / "app" / "static" / "demo")
 
+    # ---------- 响应体入库上限 ----------
+    # JSON 与非 JSON 用同一个口径。调一个返回几十 MB JSON 的接口时，
+    # 整份响应体会把 MySQL 的 JSON 列撑爆，报告与 AI 分析也会拖着它。
+    response_body_max_chars: int = 200_000
+
+    # ---------- Web UI 执行并发 ----------
+    # 同时最多拉起几个浏览器实例。两个人同时点执行就是两个 Chrome，
+    # 不设上限时机器资源完全不受控。超出的请求先排队等一小会儿，
+    # 等不到就返回一条 error 结果（不无限挂起请求线程）。
+    web_max_concurrent_sessions: int = 2
+    web_browser_wait_seconds: int = 30
+
+    # ---------- 执行记录清扫 ----------
+    # 启动时把「开始至今超过这么久、还停在 running」的记录标成 error。
+    # 功能执行没有心跳，只能按开始时间判断；阈值给得宽松是为避免误伤长用例。
+    execution_stale_minutes: int = 60
+
+    # ---------- 性能测试（接口压测） ----------
+    # 这些是「防呆上限」，不是性能承诺：压测机、网络、被测系统都会影响结果。
+    # 前端通过 GET /api/perf-limits 读取，避免前后端各写一份上限。
+    perf_max_concurrency: int = 50
+    perf_max_total_requests: int = 200_000
+    perf_max_duration_seconds: int = 600
+    perf_max_rps: int = 2000
+    perf_max_warmup_seconds: int = 10
+    perf_max_request_timeout: int = 120
+    perf_hard_wall_seconds: int = 900
+    perf_max_active_runs: int = 1
+    perf_stale_seconds: int = 30
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

@@ -13,6 +13,7 @@ from app.services.web_executor import (
     LOCATOR_ACTIONS,
     LOCATOR_LABELS,
     LOCATOR_MAP,
+    browser_slot_status,
 )
 
 router = APIRouter()
@@ -41,11 +42,17 @@ def web_status():
         if not available:
             problems.append(detail)
 
+    # 浏览器并发配额：前端据此在超限时禁用执行按钮并说明原因，
+    # 而不是让用户点了以后等 30 秒拿到一句「请稍后重试」
+    slots = browser_slot_status()
+
     return {
         "available": any(b["available"] for b in browsers.values()),
         "browsers": browsers,
         "cache_dir": settings.driver_cache_dir,
         "error": "；".join(problems),
+        "active_sessions": slots["active_sessions"],
+        "max_sessions": slots["max_sessions"],
         "actions": [
             {
                 "value": value,

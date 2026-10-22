@@ -8,7 +8,103 @@
 
 ---
 
-## v2.0.0 (2026-10-02) — Web 平台 MVP ★当前版本
+## v2.1.1 (2026-10-22) — 缺陷修复批次 ★当前版本
+
+> 依据 `docs/technical/修复任务单.md` 逐张执行、逐张自测。
+> 设置页版本读 `main.py` 的 `app.version`，现为 `2.1.1`。
+
+- [x] **P0-0 单元测试脚手架**：新增 `backend/tests/`、`pytest.ini`、
+      `requirements-dev.txt`；不依赖 MySQL / 浏览器 / 服务即可跑
+- [x] **P0-1 断言期望值非法不再 500**：`status_code` / `response_time` 两个数值分支
+      解析失败时返回「断言失败」，不抛异常
+- [x] **P0-2 执行记录必达终态**：单条 / Web / 计划 / 场景 / 数据驱动五条链路兜异常，
+      异常落成 `status=error` 记录而不是卡在 `running`；新增
+      `execution_reaper.py`，启动时清扫超过 `execution_stale_minutes`（默认 60）的遗留记录
+- [x] **P0-3 报告 HTML 全量转义**：新增 `_esc()`，报告页免鉴权，未转义等于允许被测接口
+      往页面里注入脚本
+- [x] **P0-4 前端长任务超时统一**：新增 `api/timeouts.js`，
+      `runCase` / `runCaseDataDriven` / `runScenario` / `runPlan` / `runWebCase` / 两个 AI
+      接口全部显式声明超时，不再被全局 30s 掐断
+- [x] **P0-5 `params_json` 全链路打通**：`build_request` 返回 6 元组并真正发出 query，
+      压测链路同步跟改；前端补查询参数编辑器与结果展示。落地时发现并补上**第四处断点**
+      `case_to_dict()`（漏了它单条执行 / 计划 / 压测三条链路都发不出去）
+- [x] **P0-6 执行结果请求头脱敏**：抽出 `services/sanitize.py`，压测原有逻辑整体搬过去
+      且行为逐字不变，功能执行复用并对请求头 / 响应头打码（响应体不动，断言要用）
+- [x] **P1-1 浏览器并发上限**：原硬编码 `Semaphore(2)` 改为
+      `web_max_concurrent_sessions` + 超时排队，`/web/status` 下发名额，满额时前端禁用按钮
+- [x] **P1-2 场景执行落 `scenario_id`**：补列（登记进 `_ADDED_COLUMNS`）+ 索引，
+      步骤回传真实起止时间；执行列表与统计都支持按场景筛选
+- [x] **P1-3 报告 / 截图 / 数据集按项目归属**：文件名带 `_p{id}_`，报告列表支持项目筛选，
+      删项目时清理对应磁盘文件（清理失败只记 warning，不影响删项目本身）
+- [x] **P1-4 响应体入库上限**：`response_body_max_chars`（默认 20 万）统一约束 JSON 与
+      非 JSON 两条分支，超限存预览并打 `response_truncated` 标记
+- [x] **P1-5 数据集元信息缓存**：`describe()` 按 `(路径, mtime, size)` 缓存行数与列名，
+      上传 / 删除主动失效；`load_rows()` 不缓存，执行时永远读文件本身
+- [x] **P1-6 版本号与文档对齐**：`CLAUDE.md` 设置页一节改为 `2.1.0`
+- [x] **P1-7 废除 `pre_script` / `post_script`（决策 D1）**：三个 schema 删除字段，
+      模型列保留并标 `deprecated`；老客户端带这两个字段提交仍然 201，只是被忽略
+- [x] **P1-8 报告文件名不可枚举（决策 D5）**：末尾追加 `secrets.token_hex(4)`；
+      随机段放最后，不影响 `_p{id}_` 前缀解析与删项目清理
+- [x] 版本号 `2.1.0` → **`2.1.1`**（唯一来源仍是 `main.py` 的 `app.version`）
+- [x] `verify_all.py` 两层兜底：顶层 `try/finally` 保证中途异常也会清场并打印
+      「本轮造过的数据」清单；启动时 3 秒探测 httpbin.org，不可达只打横幅，
+      **一条断言都不跳过**
+- [x] 验收：`verify_all.py` 新增 4 条集成断言（`params_json` 真实下发 / 执行记录必达终态 /
+      大响应体截断 / 报告文件名随机段），总数 243 → **247 项**
+
+**刻意没做的（决策已定，不是遗漏）**
+
+- **D2 · Web 执行异步化**：前端超时已放大、浏览器并发已限流、结果本就落库，
+  同步反而少一层状态机；等「要看步骤级实时进度」或「> 3 人同时跑 Web」再排期
+- **D3 · 场景并发**：场景靠变量跨步骤传递，并发会让语义直接崩；
+  只把「计划内**接口用例**并发」登记进功能单 F2-7，且默认关闭
+- **D4 · 多用户权限**：本项目定位是单机 / 单用户工具（`start.bat` + 本机 Docker +
+  文档里写着默认口令），`role` 字段保留但不做任何权限判断；仅当要作为面试作品时才做完整 RBAC
+
+## v2.1.0 (2026-10-22) — 登录态复用 + 性能测试
+
+> 在 v2.0.0 的基础上补齐 Day 12–13：Web 登录态复用与接口压测。
+
+### Day 12 · Web 登录态复用
+- [x] 登录用例执行通过后导出浏览器状态（cookie / localStorage / sessionStorage），
+      「需要登录态」的用例执行前注入；每条用例仍各起各的浏览器，共享的是状态数据
+- [x] 注入顺序硬性要求：先 `driver.get(origin)` 当跳板，再 `add_cookie`，最后写 storage。
+      在空白页或别的域上写 cookie 会被浏览器**静默丢弃**
+- [x] 清洗 Selenium 的两个坑：`sameSite` 只认 `Strict/Lax/None`（Chrome 会给
+      `unspecified`，Selenium 直接 assert 失败）；`expiry` 必须是整数秒
+- [x] 没有可用登录态时**照常执行**，只在结果里标 `session.missing` 并在界面提示，
+      不静默跳过也不直接报错
+- [x] 导出的原始状态通过 `result["_captured_session"]` 返回，**落库前 pop 掉**；
+      接口摘要只回 storage 的 key，不回 value
+- [x] 顺带修复 `${base_url}` 变量注入：接口侧与 Web 侧现在都把 `base_url` 与
+      `variables_json` 平级注入变量池
+
+### Day 13 · 性能测试（接口压测）
+- [x] 新增独立模块：**不复用 `execution` 表**。`perf_task` 存任务配置，
+      `perf_run` 存一次运行的配置快照、实时计数与聚合指标
+- [x] 两种负载模型：按总请求数 / 按持续时长；并发上限默认 50。
+      可选目标 RPS、预热、单请求超时、SSL 校验、错误率熔断
+- [x] 引擎 `services/perf_runner.py`：`ThreadPoolExecutor` + 每线程独立
+      `requests.Session`，复用 `api_executor.build_request()` 与变量解析；
+      响应体分块读取后丢弃，避免大响应撑爆内存
+- [x] 指标：总请求 / 成功失败 / 成功率 / 平均与峰值 TPS / avg-min-max /
+      P50-P90-P95-P99（固定分桶直方图近似）/ 状态码分布 / 五类错误分类 /
+      1 秒时间线 / 最多 10 条错误样本。**不存每条请求明细**
+- [x] 后台线程 + 每秒心跳：`POST /run` 立即返回 202，前端轮询
+      `/perf-runs/{id}/progress`；停止是协作式的，在途请求最多再等一个超时
+- [x] 同一进程同时只允许 1 个压测（默认）；错误率熔断 / 硬墙钟 / 请求数硬上限
+      都会自动停止并标记 `aborted`
+- [x] 进程重启后由 lifespan 的 `reap_stale_runs()` 把遗留的
+      queued/running/stopping 标记为 failed，并保留已落库计数的 partial 指标
+- [x] 启动前必须勾选「已获得压测授权」，服务端同样校验并记录 `authorized_by`
+- [x] 请求快照脱敏：只存 method / 打码 URL / header 名称 / body 大小 / auth 类型；
+      错误样本消息也会二次抹掉敏感 query 参数
+- [x] 前端：任务列表 / 编辑抽屉 / 运行确认弹窗 / 运行记录 / 运行详情；
+      纯 CSS 与 SVG 自绘延迟直方图、TPS 与延迟折线，**不引入图表库**
+- [x] `verify_all.py` 新增 Day 13 段 38 项断言（本地 `perf-target` 靶子，不出网），
+      总数 205 → **243 项**
+
+## v2.0.0 (2026-10-02) — Web 平台 MVP
 
 > 从 PySide6 桌面版重做为 Web 平台：Vue3 + Element Plus / FastAPI + MySQL。
 > 按 Day 1–11 推进，每日的取舍与踩坑见 `dev_logs/`。

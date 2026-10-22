@@ -4,9 +4,9 @@
 
 面向软件测试人员的 Web 测试管理平台，目标闭环：
 
-**项目 → 环境 → 用例 → 执行 → 报告 → 缺陷 → AI 辅助**
+**项目 → 环境 → 用例 → 执行 → 报告 → 缺陷 → AI 辅助**，外加**接口性能压测**
 
-> 七环闭环已全部打通（含 AI 辅助），侧栏 11 个页面均有实际内容，见文末「开发状态」。
+> 七环闭环已全部打通（含 AI 辅助），侧栏 12 个页面均有实际内容，见文末「开发状态」。
 
 ---
 
@@ -18,6 +18,7 @@
 | 后端 | FastAPI + SQLAlchemy 2.0 |
 | 数据库 | MySQL 8（Docker） |
 | 接口测试 | requests + jsonpath-ng |
+| 性能压测 | ThreadPoolExecutor + requests（固定分桶直方图统计延迟） |
 | Web UI 测试 | Selenium WebDriver |
 | AI 辅助 | DeepSeek API（需在 `backend/.env` 配 key） |
 | 部署 | Docker Compose（目前只有数据库在用） |
@@ -48,7 +49,7 @@
 
 **关于 `services/` 层**：执行引擎的断言逻辑、变量解析、请求构造、Selenium 步骤执行等，
 复用自既有的桌面版实现，剥离了原桌面框架的线程外壳后改为无状态服务，供 FastAPI 直接调用。
-整套引擎现在由 `backend/scripts/verify_all.py` 的 205 项验收覆盖。
+整套引擎现在由 `backend/scripts/verify_all.py` 的 243 项验收覆盖。
 
 ---
 
@@ -116,7 +117,7 @@ npm run dev
 │   │   ├── main.py             # 入口 + CORS + 建表
 │   │   ├── config.py           # 配置（读 .env）
 │   │   ├── database.py         # SQLAlchemy engine / session
-│   │   ├── models/             # ORM 模型（11 张表）
+│   │   ├── models/             # ORM 模型（14 张表）
 │   │   ├── schemas/            # 请求 / 响应模型（Pydantic）
 │   │   ├── api/                # 路由
 │   │   ├── services/           # ★ 执行引擎（复用层）
@@ -152,8 +153,9 @@ npm run dev
 
 ## 数据模型
 
-11 张表：`user` · `project` · `environment` · `test_case` · `scenario` ·
-`scenario_step` · `test_plan` · `test_plan_case` · `execution` · `defect` · `ai_task`
+14 张表：`user` · `project` · `environment` · `test_case` · `scenario` ·
+`scenario_step` · `test_plan` · `test_plan_case` · `execution` · `defect` · `ai_task` ·
+`web_session` · `perf_task` · `perf_run`
 
 用例的请求头、断言、步骤等子结构以 JSON 字段存储，避免多表 join。
 唯一的例外是**用例与计划、用例与场景**这两处关联 —— 它们需要外键级联
@@ -163,7 +165,7 @@ npm run dev
 
 ## 开发状态
 
-> 更新时间：2026-10-05（Day 12）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
+> 更新时间：2026-10-22（Day 13）。完整的功能清单见 [time/CHANGELOG.md](time/CHANGELOG.md)。
 
 | 模块 | 状态 |
 |---|---|
@@ -173,6 +175,7 @@ npm run dev
 | 用例管理（接口 / UI 两条独立线路） | ✅ 完成 |
 | 场景串联 / 数据驱动 | ✅ 完成（仅接口用例） |
 | 执行中心 / 测试报告 / 测试计划 | ✅ 完成 |
+| 性能测试（接口压测） | ✅ 完成（定量 / 定时两种模式，P50-P99、TPS、错误分类；后台运行 + 实时进度；前端纯 CSS/SVG 自绘图表。Web UI 压测刻意不做） |
 | 缺陷管理 | ✅ 完成（含失败记录一键转缺陷） |
 | AI 辅助（用例生成 / 失败分析） | ✅ 完成（DeepSeek；AI 助手页 + 用例编辑页生成 + 执行详情分析失败，每次调用落 `ai_task`。需在 `backend/.env` 配 `DEEPSEEK_API_KEY`） |
 | 设置 | ✅ 完成（修改密码 / 浏览器驱动检测 / 本机运行参数只读展示） |
@@ -183,8 +186,8 @@ npm run dev
 ### 验收
 
 ```bash
-cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 205 项，需后端已启动
+cd backend && venv/Scripts/python.exe scripts/verify_all.py   # 243 项，需后端已启动
 ```
 
-前端改动后建议用浏览器过一遍 13 条业务路由（外加登录页），确认无 console 报错与失败请求。
+前端改动后建议用浏览器过一遍 16 条业务路由（外加登录页），确认无 console 报错与失败请求。
 
