@@ -32,6 +32,9 @@ day*.png
 scenario-*.png
 .cache/
 
+# ---------- 个人笔记（不入库）----------
+面试速查.md
+
 # ---------- IDE / OS ----------
 .vscode/
 .idea/
