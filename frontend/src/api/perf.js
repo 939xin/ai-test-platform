@@ -41,6 +41,14 @@ export function listPerfRuns(params = {}) {
   return request.get('/perf-runs', { params })
 }
 
+/**
+ * 两次运行对比。left 传较早、right 传较新 —— 后端按 (right-left)/left 算 delta，
+ * 方向反了符号与染色会全错，所以由调用方显式按 id 排好。
+ */
+export function comparePerfRuns(leftId, rightId) {
+  return request.get('/perf-runs/compare', { params: { left: leftId, right: rightId } })
+}
+
 /** 运行详情（含完整 metrics_json）。 */
 export function getPerfRun(runId) {
   return request.get(`/perf-runs/${runId}`)

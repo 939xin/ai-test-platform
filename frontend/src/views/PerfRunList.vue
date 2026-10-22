@@ -5,13 +5,14 @@
  * 列表只展示摘要，完整指标在运行详情里。有活跃运行时每 3 秒自动刷新一次，
  * 全部结束就停下 —— 不要用一个永不停止的 setInterval 空转。
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import PagePagination from '@/components/PagePagination.vue'
+import PerfCompareDrawer from '@/components/PerfCompareDrawer.vue'
 import PerfRunStatusTag from '@/components/PerfRunStatusTag.vue'
 import { listProjects } from '@/api/project'
 import {
@@ -29,10 +30,18 @@ const loading = ref(false)
 
 const statusFilter = ref('')
 const taskFilter = ref(null)
+const releaseTagFilter = ref('')
 
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+
+// 勾选：不限制条数（禁用复选框会被当成功能坏了），点「对比」时再校验恰好 2 条
+const tableRef = ref(null)
+const selectedRuns = ref([])
+const compareVisible = ref(false)
+const compareLeft = ref(null)
+const compareRight = ref(null)
 
 let refreshTimer = null
 
@@ -85,13 +94,19 @@ async function loadTasks() {
   tasks.value = data.items
 }
 
-async function loadRuns() {
+/**
+ * @param keepSelection 自动刷新时保留勾选；换筛选 / 翻页时清空。
+ *                      el-table 重设 data 会清空选择，所以要在赋值后按 id 补回来。
+ */
+async function loadRuns(keepSelection = false) {
   clearTimeout(refreshTimer)
   if (currentProjectId.value == null) {
     runs.value = []
     total.value = 0
+    selectedRuns.value = []
     return
   }
+  const keepIds = keepSelection ? selectedRuns.value.map((row) => row.id) : []
   loading.value = true
   try {
     const params = {
@@ -101,11 +116,22 @@ async function loadRuns() {
     }
     if (statusFilter.value) params.status = statusFilter.value
     if (taskFilter.value) params.task_id = taskFilter.value
+    if (releaseTagFilter.value.trim()) params.release_tag = releaseTagFilter.value.trim()
     const data = await listPerfRuns(params)
     runs.value = data.items
     total.value = data.total
   } finally {
     loading.value = false
+  }
+  await nextTick()
+  if (keepIds.length) {
+    const restored = runs.value.filter((row) => keepIds.includes(row.id))
+    tableRef.value?.clearSelection()
+    restored.forEach((row) => tableRef.value?.toggleRowSelection(row, true))
+    // 不相信组件事件的时序：恢复完直接以 id 为准写回，避免「勾了却显示 0 条」
+    selectedRuns.value = restored
+  } else {
+    selectedRuns.value = []
   }
   scheduleRefresh()
 }
@@ -113,7 +139,8 @@ async function loadRuns() {
 function scheduleRefresh() {
   clearTimeout(refreshTimer)
   if (runs.value.some((row) => ACTIVE_PERF_STATUSES.includes(row.status))) {
-    refreshTimer = setTimeout(loadRuns, 3000)
+    // 自动刷新是「同一次查看」，勾选要留在原地，否则勾上两条等 3 秒就没了
+    refreshTimer = setTimeout(() => loadRuns(true), 3000)
   }
 }
 
@@ -145,6 +172,27 @@ function onPageChange(payload) {
   page.value = payload.page
   pageSize.value = payload.pageSize
   return loadRuns()
+}
+
+function onSelectionChange(rows) {
+  selectedRuns.value = rows
+}
+
+/** 对比：任意勾选，点这里校验恰好 2 条；左 = 较早（id 小），不按点击顺序。 */
+function openCompare() {
+  if (selectedRuns.value.length !== 2) {
+    ElMessage.warning(`请勾选恰好 2 条运行记录（当前 ${selectedRuns.value.length} 条）`)
+    return
+  }
+  const active = selectedRuns.value.filter((row) => ACTIVE_PERF_STATUSES.includes(row.status))
+  if (active.length) {
+    ElMessage.warning(`运行中的记录不能对比，请等它结束或先停止：#${active.map((r) => r.id).join(', #')}`)
+    return
+  }
+  const ids = selectedRuns.value.map((row) => row.id).sort((a, b) => a - b)
+  compareLeft.value = ids[0]
+  compareRight.value = ids[1]
+  compareVisible.value = true
 }
 
 function openDetail(row) {
@@ -218,17 +266,35 @@ onBeforeUnmount(() => clearTimeout(refreshTimer))
           >
             <el-option v-for="s in STATUS_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
           </el-select>
+          <el-input
+            v-model="releaseTagFilter"
+            placeholder="按版本标注筛选（回车）"
+            clearable
+            style="width: 200px"
+            @keyup.enter="onFilterChange"
+            @clear="onFilterChange"
+          />
+          <el-button @click="openCompare">
+            对比{{ selectedRuns.length ? `（已选 ${selectedRuns.length} 条）` : '' }}
+          </el-button>
           <span class="muted">共 {{ total }} 条运行记录</span>
         </div>
-        <el-button link :icon="Refresh" @click="loadRuns">刷新</el-button>
+        <el-button link :icon="Refresh" @click="loadRuns()">刷新</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="runs">
+      <el-table ref="tableRef" v-loading="loading" :data="runs" @selection-change="onSelectionChange">
+        <el-table-column type="selection" width="46" />
         <el-table-column prop="id" label="ID" width="64" />
         <el-table-column label="任务" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
             <span>{{ row.task_name || '—' }}</span>
             <span v-if="row.task_id == null" class="muted">（任务已删除）</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="版本" width="130" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.release_tag" class="mono">{{ row.release_tag }}</span>
+            <span v-else class="muted">未标注</span>
           </template>
         </el-table-column>
         <el-table-column prop="case_name" label="用例" min-width="130" show-overflow-tooltip />
@@ -284,6 +350,12 @@ onBeforeUnmount(() => clearTimeout(refreshTimer))
 
       <PagePagination :page="page" :page-size="pageSize" :total="total" @change="onPageChange" />
     </el-card>
+
+    <PerfCompareDrawer
+      v-model="compareVisible"
+      :left-id="compareLeft"
+      :right-id="compareRight"
+    />
   </div>
 </template>
 

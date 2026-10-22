@@ -15,7 +15,7 @@ import PerfRunStatusTag from '@/components/PerfRunStatusTag.vue'
 import PerfHistogram from '@/components/PerfHistogram.vue'
 import PerfLineChart from '@/components/PerfLineChart.vue'
 import {
-  ACTIVE_PERF_STATUSES, getPerfRun, getPerfRunProgress, stopPerfRun,
+  ACTIVE_PERF_STATUSES, getPerfLimits, getPerfRun, getPerfRunProgress, stopPerfRun,
 } from '@/api/perf'
 
 const route = useRoute()
@@ -26,6 +26,13 @@ const run = ref(null)
 const progress = ref(null)
 const loading = ref(true)
 const actionLoading = ref(false)
+
+// 能力边界要写进常驻说明块，数字一律从后端读 —— 页面里再写一份 50 / 600 早晚会对不上
+const limits = ref({
+  max_concurrency: null,
+  max_duration_seconds: null,
+  hard_wall_seconds: null,
+})
 
 let timer = null
 let failCount = 0
@@ -140,6 +147,84 @@ function percent(value) {
   return value == null ? '—' : `${(value * 100).toFixed(2)}%`
 }
 
+const releaseTag = computed(() => run.value?.release_tag || '')
+
+/** 导出文件名的安全化：版本号里常带 / : 空格，不能直接进文件名 */
+function safeFileName(text) {
+  return String(text).replace(/[\\/:*?"<>|\s]+/g, '_')
+}
+
+function downloadBlob(content, filename, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  // 立刻 revoke 在部分浏览器会掐断下载，延后一拍
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+/** 导出整份详情响应（含 metrics_json），归档 / 机读用。 */
+function exportJson() {
+  if (!run.value) return
+  const suffix = releaseTag.value ? `-${safeFileName(releaseTag.value)}` : ''
+  const content = JSON.stringify(
+    { exported_at: new Date().toISOString(), run: run.value },
+    null,
+    2,
+  )
+  downloadBlob(content, `perf-run-${run.value.id}${suffix}.json`, 'application/json')
+  ElMessage.success('已导出结果 JSON')
+}
+
+/** 放行记录要的那几行；直接粘进 docs/process/上线放行标准.md §6 */
+function buildMarkdown() {
+  const rows = [
+    ['运行记录', `#${run.value.id}`],
+    ['版本（release_tag）', releaseTag.value || '未标注'],
+    ['环境', run.value.env_name || '不使用环境'],
+    ['并发', String(run.value.concurrency)],
+    ['时长', `${((run.value.duration_ms || 0) / 1000).toFixed(2)} s`],
+    ['平均延迟', ms(latency.value.avg)],
+    ['p95', ms(latency.value.p95)],
+    ['p99', ms(latency.value.p99)],
+    ['TPS（平均）', tps.value.avg == null ? '—' : String(tps.value.avg)],
+    ['失败率', percent(counts.value.error_rate)],
+    ['结束时间', formatTime(run.value.finished_at)],
+  ]
+  const table = [
+    '| 项 | 实测 |',
+    '|---|---|',
+    ...rows.map(([key, value]) => `| ${key} | ${value} |`),
+  ]
+  return [
+    ...table,
+    '',
+    `> 来源：平台压测 #${run.value.id}（单机客户端、仅校验状态码），`
+      + '仅用于同一任务改前改后对比，**不作为容量验收依据**；容量结论用 k6。',
+  ].join('\n')
+}
+
+async function copyMarkdown() {
+  if (!run.value) return
+  const text = buildMarkdown()
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制 Markdown 摘要')
+  } catch {
+    // 非安全上下文（http + 非 localhost）没有 clipboard API，退回旧写法
+    const area = document.createElement('textarea')
+    area.value = text
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.appendChild(area)
+    area.select()
+    document.execCommand('copy')
+    document.body.removeChild(area)
+    ElMessage.success('已复制 Markdown 摘要')
+  }
+}
+
 function clearTimer() {
   clearTimeout(timer)
   timer = null
@@ -181,7 +266,12 @@ function schedule() {
 async function load() {
   loading.value = true
   try {
-    await refreshRun()
+    // 上限读不到不影响看数据，说明块里先显示「—」
+    const [limitsData] = await Promise.all([
+      getPerfLimits().catch(() => null),
+      refreshRun(),
+    ])
+    if (limitsData) limits.value = limitsData
     if (needsPolling()) {
       await poll()
       schedule()
@@ -231,6 +321,8 @@ onBeforeUnmount(clearTimer)
     <PageHeader :title="`运行详情 #${runId}`" :description="run ? `${run.task_name || '—'} · ${run.case_name || '—'}` : ''">
       <el-button :icon="ArrowLeft" @click="goBack">返回</el-button>
       <el-button :icon="Refresh" @click="reload">刷新</el-button>
+      <el-button :disabled="!run || isActive" @click="exportJson">导出结果 JSON</el-button>
+      <el-button :disabled="!run || isActive" @click="copyMarkdown">复制 Markdown 摘要</el-button>
       <el-button
         v-if="isActive"
         type="warning"
@@ -240,10 +332,38 @@ onBeforeUnmount(clearTimer)
       >停止压测</el-button>
     </PageHeader>
 
+    <!-- 能力边界：必须常驻可见。刻意不做折叠 / tooltip / 一次性提示 ——
+         半年后打开这条记录的人，不会去点开一个「了解更多」。 -->
+    <el-card shadow="never" class="boundary-card">
+      <div class="boundary-title">这份数据能证明什么</div>
+      <ul class="boundary-list">
+        <li>
+          压测客户端就是<strong>本机单进程</strong>（Python 线程），并发上限
+          <b class="mono">{{ limits.max_concurrency ?? '—' }}</b>（读自
+          <span class="mono">GET /api/perf-limits</span>，不是页面写死的数字）
+        </li>
+        <li>
+          单轮最长 <b class="mono">{{ limits.max_duration_seconds ?? '—' }}</b> 秒，
+          超过 <b class="mono">{{ limits.hard_wall_seconds ?? '—' }}</b> 秒会被强制停止
+        </li>
+        <li><strong>只校验 HTTP 状态码</strong>，不校验响应体内容 —— 接口返回了错数据也算成功</li>
+        <li>
+          p50 / p95 / p99 来自固定分桶插值：100 ms 以内桶宽 1–10 ms（够用）；
+          <strong>1 秒以上桶宽达数百毫秒到秒级</strong>，长尾不能当精确值引用
+        </li>
+      </ul>
+      <p class="boundary-conclusion">
+        结论：本页数据<strong>仅用于「同一任务、同一环境、改前改后」的对比，不作为容量验收依据</strong>；
+        容量结论用 k6（<span class="mono">tools/k6/</span>）。
+      </p>
+    </el-card>
+
     <template v-if="run">
       <el-card shadow="never" class="summary-card">
         <div class="summary">
           <PerfRunStatusTag :status="run.status" />
+          <el-tag v-if="releaseTag" size="small" effect="light" class="mono">{{ releaseTag }}</el-tag>
+          <el-tag v-else size="small" type="info" effect="plain">未标注版本</el-tag>
           <span class="mono">{{ run.env_name || '不使用环境' }}</span>
           <span class="mono muted">开始 {{ formatTime(run.started_at) }}</span>
           <span class="mono muted">结束 {{ formatTime(run.finished_at) }}</span>
@@ -404,6 +524,10 @@ onBeforeUnmount(clearTimer)
         <el-card shadow="never">
           <template #header><span class="card-title">运行配置</span></template>
           <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="版本标注">
+              <span v-if="releaseTag" class="mono">{{ releaseTag }}</span>
+              <span v-else class="muted">未标注</span>
+            </el-descriptions-item>
             <el-descriptions-item label="负载模式">
               {{ planned.mode === 'duration' ? '按持续时长' : '按总请求数' }}
             </el-descriptions-item>
@@ -444,6 +568,44 @@ onBeforeUnmount(clearTimer)
 </template>
 
 <style scoped>
+.boundary-card {
+  margin-bottom: 12px;
+  border-left: 3px solid var(--brand-500, #16697a);
+  background: var(--bg-sunken);
+}
+
+.boundary-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 6px;
+}
+
+.boundary-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text-2);
+}
+
+.boundary-list strong {
+  color: var(--text-1);
+}
+
+.boundary-list b {
+  color: var(--text-1);
+}
+
+.boundary-conclusion {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-1);
+}
+
 .summary-card {
   margin-bottom: 12px;
 }

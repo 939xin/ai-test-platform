@@ -54,6 +54,14 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         # 全新库由模型声明自己建。
         "scenario_id": "INT NULL, ADD INDEX `ix_execution_scenario_id` (`scenario_id`)",
     },
+    "perf_task": {
+        # 发布版本标注（F3-5）。空串表示未标注，不用 NULL。
+        "release_tag": "VARCHAR(64) NOT NULL DEFAULT ''",
+    },
+    "perf_run": {
+        # 运行时版本快照：任务改版本不影响历史运行。
+        "release_tag": "VARCHAR(64) NOT NULL DEFAULT ''",
+    },
 }
 
 

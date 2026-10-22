@@ -159,6 +159,12 @@ onMounted(async () => {
       <el-table v-loading="loading" :data="tasks">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="任务名称" min-width="170" show-overflow-tooltip />
+        <el-table-column label="版本" width="130" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.release_tag" class="mono">{{ row.release_tag }}</span>
+            <span v-else class="muted">未标注</span>
+          </template>
+        </el-table-column>
         <el-table-column label="目标接口" min-width="260" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.case_id" class="mono target">

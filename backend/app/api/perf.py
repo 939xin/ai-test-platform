@@ -24,9 +24,12 @@ from app.database import get_db
 from app.models import Environment, PerfRun, PerfTask, TestCase, User
 from app.schemas.common import Page
 from app.schemas.perf import (
+    PerfCompareDelta,
+    PerfCompareSide,
     PerfLimits,
     PerfRunAccepted,
     PerfRunBrief,
+    PerfRunCompare,
     PerfRunOut,
     PerfRunProgress,
     PerfStopResult,
@@ -94,6 +97,7 @@ def _task_brief(task: PerfTask, case: tuple | None, env_name: str | None) -> Per
         project_id=task.project_id,
         name=task.name,
         description=task.description,
+        release_tag=task.release_tag or "",
         case_id=task.case_id,
         case_name=case[0] if case else None,
         case_type=case[1] if case else None,
@@ -132,6 +136,7 @@ def _run_brief(run: PerfRun) -> PerfRunBrief:
         project_id=run.project_id,
         task_id=run.task_id,
         task_name=run.task_name,
+        release_tag=run.release_tag or "",
         case_id=run.case_id,
         case_name=run.case_name,
         env_name=run.env_name,
@@ -150,6 +155,41 @@ def _run_brief(run: PerfRun) -> PerfRunBrief:
         started_at=run.started_at,
         finished_at=run.finished_at,
     )
+
+
+def _compare_side(run: PerfRun) -> PerfCompareSide:
+    metrics = run.metrics_json or {}
+    counts = metrics.get("counts") or {}
+    return PerfCompareSide(
+        run_id=run.id,
+        task_id=run.task_id,
+        task_name=run.task_name,
+        case_id=run.case_id,
+        case_name=run.case_name,
+        env_id=run.env_id,
+        env_name=run.env_name,
+        release_tag=run.release_tag or "",
+        status=run.status,
+        load_mode=run.load_mode,
+        concurrency=run.concurrency,
+        total_requests=run.total_requests,
+        duration_seconds=run.duration_seconds,
+        duration_ms=run.duration_ms,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        counts=counts,
+        latency_ms=metrics.get("latency_ms") or {},
+        tps=metrics.get("tps") or {},
+        errors=metrics.get("errors") or {},
+        error_rate=counts.get("error_rate"),
+    )
+
+
+def _pct(base, new) -> float | None:
+    """右侧相对左侧的变化百分比。左侧为 0 / 缺失时返回 None，不编造百分比。"""
+    if base in (None, 0) or new is None:
+        return None
+    return round((new - base) / base * 100, 2)
 
 
 def _run_out(run: PerfRun) -> PerfRunOut:
@@ -273,6 +313,10 @@ def update_perf_task(task_id: int, payload: PerfTaskUpdate, db: Session = Depend
     task = get_task_or_404(db, task_id)
     data = payload.model_dump(exclude_unset=True)
 
+    # 列是 NOT NULL：显式传 null 当成「清空标注」，不能把 None 写进库
+    if "release_tag" in data and data["release_tag"] is None:
+        data["release_tag"] = ""
+
     if "case_id" in data:
         if data["case_id"] is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
@@ -382,6 +426,12 @@ def run_perf_task(
         project_id=task.project_id,
         task_id=task.id,
         task_name=task.name,
+        # 运行时快照：请求里显式传了就用传的（空串也算显式），否则用任务的
+        release_tag=(
+            payload.release_tag
+            if payload.release_tag is not None
+            else (task.release_tag or "")
+        ),
         case_id=case.id,
         case_name=case.name,
         env_id=env.id if env else None,
@@ -437,6 +487,7 @@ def list_perf_runs(
     project_id: int | None = Query(None),
     task_id: int | None = Query(None),
     status_value: str | None = Query(None, alias="status"),
+    release_tag: str | None = Query(None, description="按版本标注模糊匹配"),
     page: PageParams = Depends(),
     db: Session = Depends(get_db),
 ):
@@ -447,9 +498,60 @@ def list_perf_runs(
         stmt = stmt.where(PerfRun.task_id == task_id)
     if status_value:
         stmt = stmt.where(PerfRun.status == status_value)
+    if release_tag and release_tag.strip():
+        # 模糊匹配：版本号常见写法 v2.2.0 / 2.2.0-rc1，用户只记得半个
+        stmt = stmt.where(PerfRun.release_tag.contains(release_tag.strip()))
 
     rows, total = paginate(db, stmt.order_by(PerfRun.id.desc()), page)
     return Page(items=[_run_brief(row) for row in rows], total=total)
+
+
+# ⚠️ 必须声明在 /perf-runs/{run_id} 之前：否则 "compare" 会被当成 run_id 解析成整数，直接 422。
+@router.get("/perf-runs/compare", response_model=PerfRunCompare, summary="两次压测结果对比")
+def compare_perf_runs(
+    left: int = Query(..., description="较早的运行 id"),
+    right: int = Query(..., description="较新的运行 id"),
+    db: Session = Depends(get_db),
+):
+    left_run = get_run_or_404(db, left)
+    right_run = get_run_or_404(db, right)
+
+    # 运行中的数据没有最终指标，比出来的 delta 会随下一次心跳变化 —— 拒绝比编造好
+    for run in (left_run, right_run):
+        if run.status not in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"运行 #{run.id} 尚未结束（当前状态 {run.status}），无法对比",
+            )
+
+    side_left = _compare_side(left_run)
+    side_right = _compare_side(right_run)
+    latency_left = side_left.latency_ms
+    latency_right = side_right.latency_ms
+
+    warnings: list[str] = []
+    if left_run.case_id != right_run.case_id:
+        warnings.append("两次不是同一条用例，对比仅供参考")
+    if left_run.env_id != right_run.env_id:
+        warnings.append("两次运行的环境不同，对比仅供参考")
+
+    delta = PerfCompareDelta(
+        total_pct=_pct(side_left.counts.get("total"), side_right.counts.get("total")),
+        failed_pct=_pct(side_left.counts.get("failed"), side_right.counts.get("failed")),
+        error_rate_pct=_pct(side_left.error_rate, side_right.error_rate),
+        tps_pct=_pct(side_left.tps.get("avg"), side_right.tps.get("avg")),
+        avg_pct=_pct(latency_left.get("avg"), latency_right.get("avg")),
+        p50_pct=_pct(latency_left.get("p50"), latency_right.get("p50")),
+        p90_pct=_pct(latency_left.get("p90"), latency_right.get("p90")),
+        p95_pct=_pct(latency_left.get("p95"), latency_right.get("p95")),
+        p99_pct=_pct(latency_left.get("p99"), latency_right.get("p99")),
+    )
+    return PerfRunCompare(
+        left=side_left,
+        right=side_right,
+        delta=delta,
+        warning="；".join(warnings) if warnings else None,
+    )
 
 
 @router.get("/perf-runs/{run_id}", response_model=PerfRunOut, summary="压测运行详情")

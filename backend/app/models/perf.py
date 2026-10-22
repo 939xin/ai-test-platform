@@ -31,6 +31,11 @@ class PerfTask(Base):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 任务级默认发布版本，运行时会被快照到 perf_run.release_tag。
+    # 空串是合法值（表示未标注），**不用 NULL** —— 与 execution.release_tag 口径一致。
+    release_tag: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", server_default=""
+    )
     case_id: Mapped[int | None] = mapped_column(
         ForeignKey("test_case.id", ondelete="SET NULL"), nullable=True
     )
@@ -80,6 +85,10 @@ class PerfRun(Base):
         ForeignKey("perf_task.id", ondelete="SET NULL"), nullable=True
     )
     task_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # 运行时的版本快照：任务后来改了 release_tag，历史运行不受影响
+    release_tag: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", server_default=""
+    )
     case_id: Mapped[int | None] = mapped_column(
         ForeignKey("test_case.id", ondelete="SET NULL"), nullable=True
     )

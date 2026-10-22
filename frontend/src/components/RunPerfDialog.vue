@@ -19,6 +19,9 @@ const visible = computed({
 
 const environments = ref([])
 const envId = ref(null)
+// 默认带出任务上的版本标注，本次可改可清空 ——
+// 新版本上线时忘了改任务的 tag，就是靠这一处兜住，避免历史记录标错版本
+const releaseTag = ref('')
 const confirmed = ref(false)
 const running = ref(false)
 
@@ -35,6 +38,7 @@ async function load() {
   if (props.projectId == null) return
   environments.value = await listEnvironments(props.projectId)
   envId.value = props.taskRow?.env_id ?? null
+  releaseTag.value = props.taskRow?.release_tag || ''
   confirmed.value = false
 }
 
@@ -44,6 +48,9 @@ async function start() {
   try {
     const result = await runPerfTask(props.taskRow.id, {
       env_id: envId.value,
+      // 显式传（包括空串）：清空输入框 = 本次标注为「未标注」，
+      // 不能靠「不传」来表达，否则会悄悄回落到任务上的旧版本号
+      release_tag: releaseTag.value.trim(),
       authorization_confirmed: true,
     })
     ElMessage.success(`压测已启动（运行 #${result.run_id}）`)
@@ -82,6 +89,19 @@ watch(visible, (open) => {
           </el-select>
         </el-descriptions-item>
       </el-descriptions>
+
+      <el-form label-width="90px" class="tag-form" @submit.prevent>
+        <el-form-item label="版本标注">
+          <el-input
+            v-model="releaseTag"
+            maxlength="64"
+            clearable
+            placeholder="默认带出任务上的版本，可改可清空"
+            style="width: 320px"
+          />
+          <span class="hint inline">写进本次运行记录；清空表示本次未标注</span>
+        </el-form-item>
+      </el-form>
 
       <el-alert
         type="warning"
@@ -140,7 +160,17 @@ watch(visible, (open) => {
 }
 
 .meta {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+}
+
+.tag-form {
+  margin-bottom: 6px;
+}
+
+.hint.inline {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--text-3);
 }
 
 .warning {

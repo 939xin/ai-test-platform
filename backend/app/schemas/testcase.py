@@ -4,6 +4,7 @@ TestCase 同时承载接口用例（method/url/headers/assertions）和 Web 用�
 由 type 字段区分。子结构一律用 JSON 字段存，不再拆子表。
 """
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -193,6 +194,23 @@ class TestCaseOut(BaseModel):
 
     created_at: datetime
     updated_at: datetime
+
+
+class CaseBatchRequest(BaseModel):
+    """批量启用 / 停用 / 删除。
+
+    一次最多 200 条，与列表分页上限一致 —— 前端能勾到的也就是一页，
+    出现更大的数字只可能是脚本误调。
+    """
+
+    action: Literal["enable", "disable", "delete"]
+    case_ids: list[int] = Field(..., min_length=1, max_length=200)
+
+
+class CaseBatchResult(BaseModel):
+    action: str
+    project_id: int
+    affected: int
 
 
 class TestCaseBrief(BaseModel):

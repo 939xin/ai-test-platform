@@ -10,6 +10,7 @@ Web 登录态那一段也只走 /api/demo/ 下的离线靶页，不出网。
 """
 import io
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -22,7 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import requests  # noqa: E402
 
-BASE = "http://127.0.0.1:8000/api"
+# 默认打用户正在跑的 8000；临时起一个实例验证新代码时用 VERIFY_BASE 指过去，
+# 不必为了验收去动 8000 上的进程
+BASE = os.environ.get("VERIFY_BASE", "http://127.0.0.1:8000/api")
 # 全站接口已统一校验 JWT，除登录本身外都得带 token。
 # 用 Session 挂一次 Authorization 头，比在 100 多处逐个传 headers 可靠得多
 # （漏一处就是 401，而且报错信息还会掩盖成「业务失败」）。
@@ -341,6 +344,170 @@ def main() -> int:
 
         r = SESSION.get(f"{BASE}/projects/{pid}/cases", params={"keyword": "验收"}, timeout=10)
         check("按中文关键字筛选", r.status_code == 200 and len(r.json()["items"]) == 1)
+
+        section("F1-2 · 用例批量操作与标签筛选 ★")
+        # 4 条用例覆盖四种情况：单个标签 / 带空格与重复（保存侧归一化）/ 相似标签（防 LIKE 误伤）/ 无标签
+        f12_ids = []
+        for f12_name, f12_tags in [
+            ("F1-2 冒烟用例", "f12"),
+            ("F1-2 订单用例", " f12 , 订单 ,, f12 "),
+            ("F1-2 相似标签用例", "f12x"),
+            ("F1-2 无标签用例", ""),
+        ]:
+            r = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
+                "name": f12_name,
+                "type": "api",
+                "tags": f12_tags,
+                "method": "GET",
+                "url": "https://example.com/f12",
+                "assertions_json": [
+                    {"assertion_type": "status_code", "operator": "eq",
+                     "expected_value": "200", "target": ""},
+                ],
+            }, timeout=10)
+            f12_ids.append(r.json().get("id") if r.status_code == 201 else None)
+        check("F1-2 新建 4 条用例", all(f12_ids), str(f12_ids))
+
+        r = SESSION.get(f"{BASE}/cases/{f12_ids[1]}", timeout=10)
+        check("F1-2 保存时标签归一化（去空格 / 去空项 / 去重）",
+              r.status_code == 200 and r.json().get("tags") == "f12,订单",
+              f"实际 {r.json().get('tags')!r}")
+
+        r = SESSION.get(f"{BASE}/projects/{pid}/cases",
+                        params={"type": "api", "tag": "f12", "limit": 200}, timeout=10)
+        hit_ids = {c["id"] for c in r.json().get("items", [])}
+        check("F1-2 按标签筛选命中 2 条（FIND_IN_SET 精确匹配，不含 f12x）",
+              r.status_code == 200 and hit_ids == {f12_ids[0], f12_ids[1]},
+              f"命中 {sorted(hit_ids)}，f12x={f12_ids[2]}")
+
+        r = SESSION.get(f"{BASE}/projects/{pid}/cases",
+                        params={"type": "api", "tag": ["f12", "订单"], "limit": 200}, timeout=10)
+        check("F1-2 多标签按「或」匹配（并集不变）",
+              r.status_code == 200
+              and {c["id"] for c in r.json()["items"]} == {f12_ids[0], f12_ids[1]})
+
+        r = SESSION.get(f"{BASE}/projects/{pid}/cases",
+                        params={"type": "api", "tag": "f12x", "limit": 200}, timeout=10)
+        check("F1-2 相似标签互不串味",
+              {c["id"] for c in r.json()["items"]} == {f12_ids[2]})
+
+        # 保存侧归一化会把空格去掉，所以「查询侧 REPLACE」只能靠绕过接口直插脏数据来钉。
+        # 这条是必须的：历史数据里有手工写的 "smoke, 订单"，不 REPLACE 就永远筛不出来。
+        from app.database import SessionLocal
+        from app.models import TestCase
+
+        dirty_id = None
+        db = SessionLocal()
+        try:
+            dirty = TestCase(
+                project_id=pid, name="F1-2 脏标签用例", type="api",
+                tags="f12, 订单", method="GET", url="https://example.com/dirty",
+            )
+            db.add(dirty)
+            db.commit()
+            db.refresh(dirty)
+            dirty_id = dirty.id
+        finally:
+            db.close()
+
+        r = SESSION.get(f"{BASE}/cases/{dirty_id}", timeout=10)
+        check("F1-2 脏数据确实是「逗号 + 空格」写法（绕过保存归一化）",
+              r.status_code == 200 and r.json().get("tags") == "f12, 订单",
+              f"实际 {r.json().get('tags')!r}")
+
+        r = SESSION.get(f"{BASE}/projects/{pid}/cases",
+                        params={"type": "api", "tag": "订单", "limit": 200}, timeout=10)
+        hit_ids = {c["id"] for c in r.json().get("items", [])}
+        check("F1-2 查询侧 REPLACE 去空格（库里的 \"f12, 订单\" 能按「订单」命中）",
+              hit_ids == {f12_ids[1], dirty_id}, f"命中 {sorted(hit_ids)}")
+
+        r = SESSION.get(f"{BASE}/projects/{pid}/cases",
+                        params={"type": "api", "tag": " f12 ", "limit": 200}, timeout=10)
+        check("F1-2 入参两侧空格被 strip（?tag=%20f12%20 同样命中）",
+              {c["id"] for c in r.json().get("items", [])} >= {f12_ids[0], f12_ids[1]})
+
+        r = SESSION.get(f"{BASE}/projects/{pid}/cases",
+                        params={"type": "api", "enabled": "false", "limit": 200}, timeout=10)
+        check("F1-2 按启用状态筛选（新建的 4 条都不在停用里）",
+              r.status_code == 200
+              and not ({c["id"] for c in r.json()["items"]} & set(f12_ids)))
+
+        r = SESSION.post(f"{BASE}/cases/batch",
+                         json={"action": "disable", "case_ids": f12_ids[:3]}, timeout=10)
+        check("F1-2 批量停用 3 条", r.status_code == 200 and r.json().get("affected") == 3,
+              r.text[:120])
+
+        r = SESSION.get(f"{BASE}/projects/{pid}/cases",
+                        params={"type": "api", "enabled": "false", "limit": 200}, timeout=10)
+        check("F1-2 批量停用真的落库（3 条都在停用列表里）",
+              set(f12_ids[:3]) <= {c["id"] for c in r.json()["items"]})
+
+        r = SESSION.post(f"{BASE}/cases/batch",
+                         json={"action": "enable", "case_ids": f12_ids[:3]}, timeout=10)
+        r = SESSION.get(f"{BASE}/projects/{pid}/cases",
+                        params={"type": "api", "enabled": "true", "limit": 200}, timeout=10)
+        check("F1-2 批量启用恢复",
+              set(f12_ids[:3]) <= {c["id"] for c in r.json()["items"]})
+
+        r = SESSION.post(f"{BASE}/cases/batch",
+                         json={"action": "enable", "case_ids": []}, timeout=10)
+        check("F1-2 空 case_ids → 422", r.status_code == 422)
+
+        r = SESSION.post(f"{BASE}/cases/batch",
+                         json={"action": "enable", "case_ids": [f12_ids[0], 99999999]}, timeout=10)
+        check("F1-2 含不存在的 id → 404（整批不动）", r.status_code == 404)
+
+        # 跨项目批量必须整批拒绝：这里造第二个项目来验
+        r = SESSION.post(f"{BASE}/projects", json={"name": "F1-2 跨项目校验"}, timeout=10)
+        other_pid = r.json().get("id") if r.status_code == 201 else None
+        r = SESSION.post(f"{BASE}/projects/{other_pid}/cases",
+                         json={"name": "外项目用例", "type": "api"}, timeout=10)
+        other_case_id = r.json().get("id") if r.status_code == 201 else None
+        r = SESSION.post(f"{BASE}/cases/batch",
+                         json={"action": "disable", "case_ids": [f12_ids[0], other_case_id]},
+                         timeout=10)
+        check("F1-2 跨项目批量 → 400", r.status_code == 400, f"实际 {r.status_code}")
+        r = SESSION.get(f"{BASE}/cases/{f12_ids[0]}", timeout=10)
+        check("F1-2 跨项目请求没有部分成功（本项目的用例仍启用）",
+              r.status_code == 200 and r.json().get("enabled") is True)
+        SESSION.delete(f"{BASE}/projects/{other_pid}", timeout=10)
+
+        r = SESSION.post(f"{BASE}/cases/{f12_ids[1]}/clone", timeout=10)
+        clone = r.json() if r.status_code == 200 else {}
+        check("F1-2 克隆成功且副本强制停用", r.status_code == 200 and clone.get("enabled") is False)
+        check("F1-2 副本名字带「（副本）」后缀",
+              clone.get("name") == "F1-2 订单用例（副本）", f"实际 {clone.get('name')!r}")
+        check("F1-2 副本继承标签", clone.get("tags") == "f12,订单")
+        check("F1-2 副本复制了断言", len(clone.get("assertions_json") or []) == 1)
+
+        # 改副本不能影响原用例（深拷贝）。对象级同一性由 tests/test_case_ops.py 钉住，
+        # 这里走接口验「落库后两边独立」。
+        SESSION.put(f"{BASE}/cases/{clone.get('id')}", json={
+            "assertions_json": [
+                {"assertion_type": "status_code", "operator": "eq",
+                 "expected_value": "404", "target": ""},
+            ],
+        }, timeout=10)
+        r = SESSION.get(f"{BASE}/cases/{f12_ids[1]}", timeout=10)
+        check("F1-2 改副本不影响原用例（深拷贝）",
+              r.json()["assertions_json"][0]["expected_value"] == "200",
+              f"原用例期望值 {r.json()['assertions_json'][0]['expected_value']!r}")
+
+        r = SESSION.get(f"{BASE}/projects/{pid}/case-tags", params={"type": "api"}, timeout=10)
+        check("F1-2 标签数据源是裸数组（不是 {items,total}）",
+              r.status_code == 200 and isinstance(r.json(), list), str(type(r.json())))
+        check("F1-2 标签数据源含项目内全部标签且去重",
+              {"f12", "f12x", "订单"} <= set(r.json()), str(r.json()))
+        r = SESSION.get(f"{BASE}/projects/{pid}/case-tags",
+                        params={"type": "api", "limit": 1}, timeout=10)
+        check("F1-2 标签数据源 limit 只截断条数、形状不变",
+              isinstance(r.json(), list) and len(r.json()) == 1)
+
+        r = SESSION.post(f"{BASE}/cases/batch",
+                         json={"action": "delete", "case_ids": [f12_ids[2]]}, timeout=10)
+        check("F1-2 批量删除 1 条", r.status_code == 200 and r.json().get("affected") == 1)
+        r = SESSION.get(f"{BASE}/cases/{f12_ids[2]}", timeout=10)
+        check("F1-2 批量删除后详情 404", r.status_code == 404)
 
         section("Day 2 · 执行闭环 ★")
         r = SESSION.post(f"{BASE}/cases/{case_id}/run", json={"env_id": env_id, "timeout": 30}, timeout=60)
@@ -1850,6 +2017,287 @@ def main() -> int:
             for task_id in perf_task_ids:
                 SESSION.delete(f"{BASE}/perf-tasks/{task_id}", timeout=10)
             for case_id in perf_case_ids:
+                SESSION.delete(f"{BASE}/cases/{case_id}", timeout=10)
+
+        # ==================== F3-5 · 压测版本标注 ====================
+        # 钉住的是「数据要和版本绑得住」：任务上的标注、运行时覆盖、
+        # 运行记录的快照三者不能互相串。空串是合法值，不是错误。
+        section("F3-5 · 压测版本标注与可追溯 ★")
+
+        f35_case_ids: list[int] = []
+        f35_task_ids: list[int] = []
+        f35_run_ids: list[int] = []
+
+        def f35_wait(run_id, timeout: float = 30) -> dict:
+            deadline = time.time() + timeout
+            last: dict = {}
+            while time.time() < deadline:
+                resp = SESSION.get(f"{BASE}/perf-runs/{run_id}/progress", timeout=10)
+                if resp.status_code != 200:
+                    return {}
+                last = resp.json()
+                if last.get("status") in ("completed", "stopped", "aborted", "failed"):
+                    return last
+                time.sleep(0.2)
+            SESSION.post(f"{BASE}/perf-runs/{run_id}/stop", timeout=10)
+            return last
+
+        def f35_start(task_id: int, **extra) -> int | None:
+            resp = SESSION.post(
+                f"{BASE}/perf-tasks/{task_id}/run",
+                json={"authorization_confirmed": True, **extra}, timeout=10,
+            )
+            run_id = resp.json().get("run_id") if resp.status_code == 202 else None
+            if run_id:
+                f35_run_ids.append(run_id)
+            return run_id
+
+        def f35_run_detail(run_id: int) -> dict:
+            resp = SESSION.get(f"{BASE}/perf-runs/{run_id}", timeout=10)
+            return resp.json() if resp.status_code == 200 else {}
+
+        try:
+            resp = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
+                "name": "F3-5 压测版本靶子", "type": "api", "method": "GET",
+                "url": "http://127.0.0.1:8000/api/perf-target/echo?delay_ms=20",
+                "headers_json": {"Authorization": f"Bearer {token}"},
+            }, timeout=10)
+            f35_case = resp.json().get("id") if resp.status_code == 201 else None
+            if f35_case:
+                f35_case_ids.append(f35_case)
+
+            def f35_task(name: str, **extra):
+                resp = SESSION.post(f"{BASE}/projects/{pid}/perf-tasks", json={
+                    "name": name, "case_id": f35_case, "load_mode": "count",
+                    "total_requests": 6, "concurrency": 2, "request_timeout": 5,
+                    **extra,
+                }, timeout=10)
+                task_id = resp.json().get("id") if resp.status_code == 201 else None
+                if task_id:
+                    f35_task_ids.append(task_id)
+                return resp, task_id
+
+            # ---------- 任务上的版本标注 ----------
+            resp, tagged_task = f35_task("F3-5 带版本任务", release_tag="  v2.2.0  ")
+            body = resp.json() if resp.status_code == 201 else {}
+            check("F3-5 建任务带版本标注，回读时两侧空格已去",
+                  resp.status_code == 201 and body.get("release_tag") == "v2.2.0",
+                  f"status={resp.status_code} tag={body.get('release_tag')!r}")
+            detail = SESSION.get(f"{BASE}/perf-tasks/{tagged_task}", timeout=10).json()
+            check("F3-5 任务详情回显版本标注（列表页也能看到）",
+                  detail.get("release_tag") == "v2.2.0",
+                  repr(detail.get("release_tag")))
+
+            resp, _ = f35_task("F3-5 版本超长", release_tag="v" * 65)
+            check("F3-5 版本标注超过 64 字符 → 422", resp.status_code == 422,
+                  f"status={resp.status_code}")
+
+            # ---------- 运行时覆盖与快照 ----------
+            override_run = f35_start(tagged_task, release_tag=" v2.2.0-rc1 ")
+            f35_wait(override_run)
+            override = f35_run_detail(override_run)
+            check("F3-5 运行时传版本 → 运行记录用覆盖值（快照，不是引用）",
+                  override.get("release_tag") == "v2.2.0-rc1",
+                  repr(override.get("release_tag")))
+            after = SESSION.get(f"{BASE}/perf-tasks/{tagged_task}", timeout=10).json()
+            check("F3-5 运行时覆盖不改动任务上的版本标注",
+                  after.get("release_tag") == "v2.2.0", repr(after.get("release_tag")))
+
+            inherit_run = f35_start(tagged_task)
+            f35_wait(inherit_run)
+            inherited = f35_run_detail(inherit_run)
+            check("F3-5 运行时不传版本 → 快照任务上的版本",
+                  inherited.get("release_tag") == "v2.2.0",
+                  repr(inherited.get("release_tag")))
+
+            # ---------- 空串是合法值 ----------
+            resp, plain_task = f35_task("F3-5 不带版本任务")
+            plain = resp.json() if resp.status_code == 201 else {}
+            check("F3-5 不带版本建任务 → 空串且不报错",
+                  resp.status_code == 201 and plain.get("release_tag") == "",
+                  f"status={resp.status_code} tag={plain.get('release_tag')!r}")
+            plain_run = f35_start(plain_task)
+            f35_wait(plain_run)
+            check("F3-5 任务无版本 → 运行记录也是空串（不是 None）",
+                  f35_run_detail(plain_run).get("release_tag") == "",
+                  repr(f35_run_detail(plain_run).get("release_tag")))
+
+            # ---------- 列表筛选 ----------
+            filtered = SESSION.get(f"{BASE}/perf-runs", params={
+                "project_id": pid, "release_tag": "rc1", "limit": 50,
+            }, timeout=10).json()
+            rows = filtered.get("items") or []
+            check("F3-5 列表按版本模糊筛选能筛到", filtered.get("total", 0) >= 1
+                  and all("rc1" in (row.get("release_tag") or "") for row in rows),
+                  f'total={filtered.get("total")}')
+            check("F3-5 版本筛选后返回形状仍是 {items,total}",
+                  isinstance(rows, list) and "total" in filtered)
+            miss = SESSION.get(f"{BASE}/perf-runs", params={
+                "project_id": pid, "release_tag": "no-such-release-xyz",
+            }, timeout=10).json()
+            check("F3-5 筛不到时返回空列表而非报错",
+                  miss.get("total") == 0 and miss.get("items") == [])
+
+            # ---------- 删任务后快照仍在 ----------
+            SESSION.delete(f"{BASE}/perf-tasks/{tagged_task}", timeout=10)
+            f35_task_ids.remove(tagged_task)
+            kept = f35_run_detail(override_run)
+            check("F3-5 删任务后运行记录的版本快照仍在",
+                  kept.get("task_id") is None and kept.get("release_tag") == "v2.2.0-rc1",
+                  f'task_id={kept.get("task_id")} tag={kept.get("release_tag")!r}')
+        finally:
+            for run_id in f35_run_ids:
+                resp = SESSION.get(f"{BASE}/perf-runs/{run_id}", timeout=10)
+                if resp.status_code == 200 and resp.json().get("status") in (
+                    "queued", "running", "stopping"
+                ):
+                    SESSION.post(f"{BASE}/perf-runs/{run_id}/stop", timeout=10)
+                    f35_wait(run_id, timeout=10)
+            for run_id in f35_run_ids:
+                SESSION.delete(f"{BASE}/perf-runs/{run_id}", timeout=10)
+            for task_id in f35_task_ids:
+                SESSION.delete(f"{BASE}/perf-tasks/{task_id}", timeout=10)
+            for case_id in f35_case_ids:
+                SESSION.delete(f"{BASE}/cases/{case_id}", timeout=10)
+
+        # ==================== F3-6 · 两次压测结果对比 ====================
+        # 钉住三件事：左右方向（按 id 排，不按勾选顺序）、delta 符号、
+        # 非终态与跨用例的处置口径（一个 400，一个只给 warning）。
+        section("F3-6 · 两次压测结果对比 ★")
+
+        f36_case_ids: list[int] = []
+        f36_task_ids: list[int] = []
+        f36_run_ids: list[int] = []
+
+        def f36_case(name: str, query: str) -> int | None:
+            resp = SESSION.post(f"{BASE}/projects/{pid}/cases", json={
+                "name": name, "type": "api", "method": "GET",
+                "url": f"http://127.0.0.1:8000/api/perf-target/echo{query}",
+                "headers_json": {"Authorization": f"Bearer {token}"},
+            }, timeout=10)
+            case_id = resp.json().get("id") if resp.status_code == 201 else None
+            if case_id:
+                f36_case_ids.append(case_id)
+            return case_id
+
+        def f36_task(name: str, case_id, **overrides) -> int | None:
+            resp = SESSION.post(f"{BASE}/projects/{pid}/perf-tasks", json={
+                "name": name, "case_id": case_id, "load_mode": "count",
+                "total_requests": 20, "concurrency": 4, "request_timeout": 5,
+                **overrides,
+            }, timeout=10)
+            task_id = resp.json().get("id") if resp.status_code == 201 else None
+            if task_id:
+                f36_task_ids.append(task_id)
+            return task_id
+
+        def f36_start(task_id: int) -> int | None:
+            resp = SESSION.post(f"{BASE}/perf-tasks/{task_id}/run",
+                                json={"authorization_confirmed": True}, timeout=10)
+            run_id = resp.json().get("run_id") if resp.status_code == 202 else None
+            if run_id:
+                f36_run_ids.append(run_id)
+            return run_id
+
+        def f36_compare(left_id: int, right_id: int):
+            return SESSION.get(f"{BASE}/perf-runs/compare",
+                               params={"left": left_id, "right": right_id}, timeout=10)
+
+        try:
+            case_a = f36_case("F3-6 对比用例 A", "?delay_ms=20")
+            task_a = f36_task("F3-6 对比任务 A", case_a)
+
+            run_high = f36_start(task_a)
+            f35_wait(run_high)
+            # 第二次用更低并发：延迟不变、TPS 应当下降 → delta 为负
+            SESSION.put(f"{BASE}/perf-tasks/{task_a}", json={"concurrency": 1}, timeout=10)
+            run_low = f36_start(task_a)
+            f35_wait(run_low)
+
+            resp = f36_compare(run_high, run_low)
+            data = resp.json() if resp.status_code == 200 else {}
+            left = data.get("left") or {}
+            right = data.get("right") or {}
+            delta = data.get("delta") or {}
+            check("F3-6 对比接口可用（/perf-runs/compare 未被 {run_id} 吞掉）",
+                  resp.status_code == 200, f"status={resp.status_code}")
+            check("F3-6 左右两侧按传入 id 对应（左 = 较早）",
+                  left.get("run_id") == run_high and right.get("run_id") == run_low,
+                  f'left={left.get("run_id")} right={right.get("run_id")}')
+            check("F3-6 返回两侧负载参数（并发 / 模式 / 版本）",
+                  left.get("concurrency") == 4 and right.get("concurrency") == 1
+                  and left.get("load_mode") == "count" and "release_tag" in left,
+                  f'left={left.get("concurrency")} right={right.get("concurrency")}')
+            check("F3-6 并排返回 counts / latency / tps / errors",
+                  all(key in left for key in ("counts", "latency_ms", "tps", "errors"))
+                  and all(key in right for key in ("counts", "latency_ms", "tps", "errors")))
+            check("F3-6 每项都带差值百分比",
+                  isinstance(delta.get("p95_pct"), (int, float))
+                  and isinstance(delta.get("tps_pct"), (int, float)),
+                  str(delta))
+            check("F3-6 并发降低后 TPS 差值为负（方向没写反）",
+                  delta.get("tps_pct", 1) < 0, f'tps_pct={delta.get("tps_pct")}')
+            swapped = f36_compare(run_low, run_high).json().get("delta") or {}
+            check("F3-6 左右对调后差值符号相反",
+                  (swapped.get("tps_pct") or 0) * (delta.get("tps_pct") or 1) < 0,
+                  f'{delta.get("tps_pct")} vs {swapped.get("tps_pct")}')
+            check("F3-6 同用例同环境不给 warning", data.get("warning") is None,
+                  repr(data.get("warning")))
+
+            # ---------- 跨用例：只警告不阻断 ----------
+            case_b = f36_case("F3-6 对比用例 B", "?delay_ms=50")
+            task_b = f36_task("F3-6 对比任务 B", case_b, total_requests=10)
+            run_b = f36_start(task_b)
+            f35_wait(run_b)
+            resp = f36_compare(run_high, run_b)
+            cross = resp.json() if resp.status_code == 200 else {}
+            check("F3-6 跨用例对比仍返回 200",
+                  resp.status_code == 200, f"status={resp.status_code}")
+            check("F3-6 跨用例对比带 warning（不是错误）",
+                  "不是同一条用例" in (cross.get("warning") or ""),
+                  repr(cross.get("warning")))
+
+            # ---------- 非终态：400 并说明原因 ----------
+            long_task = f36_task("F3-6 对比长跑", case_a, load_mode="duration",
+                                 duration_seconds=30, concurrency=1)
+            run_active = f36_start(long_task)
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                progress = SESSION.get(f"{BASE}/perf-runs/{run_active}/progress",
+                                       timeout=10).json()
+                if progress.get("requests_done", 0) >= 2:
+                    break
+                time.sleep(0.2)
+            resp = f36_compare(run_high, run_active)
+            detail_text = str(resp.json().get("detail", "")) if resp.status_code == 400 else ""
+            check("F3-6 一侧运行中 → 400", resp.status_code == 400,
+                  f"status={resp.status_code}")
+            check("F3-6 400 说明是哪一次没结束",
+                  f"#{run_active}" in detail_text and "无法对比" in detail_text,
+                  detail_text or "（无 detail）")
+            SESSION.post(f"{BASE}/perf-runs/{run_active}/stop", timeout=10)
+            f35_wait(run_active, timeout=10)
+
+            # ---------- 参数校验 ----------
+            resp = SESSION.get(f"{BASE}/perf-runs/compare", params={"left": run_high}, timeout=10)
+            check("F3-6 缺少 right 参数 → 422", resp.status_code == 422,
+                  f"status={resp.status_code}")
+            resp = f36_compare(run_high, 99999999)
+            check("F3-6 运行 id 不存在 → 404", resp.status_code == 404,
+                  f"status={resp.status_code}")
+        finally:
+            for run_id in f36_run_ids:
+                resp = SESSION.get(f"{BASE}/perf-runs/{run_id}", timeout=10)
+                if resp.status_code == 200 and resp.json().get("status") in (
+                    "queued", "running", "stopping"
+                ):
+                    SESSION.post(f"{BASE}/perf-runs/{run_id}/stop", timeout=10)
+                    f35_wait(run_id, timeout=10)
+            for run_id in f36_run_ids:
+                SESSION.delete(f"{BASE}/perf-runs/{run_id}", timeout=10)
+            for task_id in f36_task_ids:
+                SESSION.delete(f"{BASE}/perf-tasks/{task_id}", timeout=10)
+            for case_id in f36_case_ids:
                 SESSION.delete(f"{BASE}/cases/{case_id}", timeout=10)
 
         # ==================== 修复任务单 · 集成回归 ====================

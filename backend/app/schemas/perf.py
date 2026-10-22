@@ -6,11 +6,24 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import settings
 
 LoadMode = Literal["count", "duration"]
+
+RELEASE_TAG_MAX = 64
+
+
+def _strip_release_tag(value: str | None) -> str | None:
+    """版本号两侧空格一律去掉；None 原样返回，由调用方决定是否回落任务默认值。
+
+    空串是合法值（未标注），**不在任何一层把它转成 None** —— 与 execution 的
+    release_tag 口径一致，界面与导出都按「空串 = 未标注」展示。
+    """
+    if value is None:
+        return None
+    return str(value).strip()
 
 
 class PerfTaskCreate(BaseModel):
@@ -18,6 +31,7 @@ class PerfTaskCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=128)
     description: str = ""
+    release_tag: str = Field("", max_length=RELEASE_TAG_MAX, description="发布版本标注，可留空")
     case_id: int
     env_id: int | None = None
 
@@ -34,12 +48,19 @@ class PerfTaskCreate(BaseModel):
     error_rate_threshold: float | None = Field(50.0, ge=0, le=100)
     min_requests_before_abort: int = Field(20, ge=1, le=10000)
 
+    @field_validator("release_tag", mode="before")
+    @classmethod
+    def _clean_release_tag(cls, value):
+        # mode="before"：先 strip 再校验长度，否则 "  x  " 会按带空格的原始长度算
+        return _strip_release_tag(value) or ""
+
 
 class PerfTaskUpdate(BaseModel):
     """全部可选，只更新传了的字段。"""
 
     name: str | None = Field(None, min_length=1, max_length=128)
     description: str | None = None
+    release_tag: str | None = Field(None, max_length=RELEASE_TAG_MAX)
     case_id: int | None = None
     env_id: int | None = None
     load_mode: LoadMode | None = None
@@ -53,6 +74,11 @@ class PerfTaskUpdate(BaseModel):
     error_rate_threshold: float | None = Field(None, ge=0, le=100)
     min_requests_before_abort: int | None = Field(None, ge=1, le=10000)
 
+    @field_validator("release_tag", mode="before")
+    @classmethod
+    def _clean_release_tag(cls, value):
+        return _strip_release_tag(value)
+
 
 class PerfTaskBrief(BaseModel):
     """任务列表用。case_name / method / url 由接口回查填充。"""
@@ -63,6 +89,7 @@ class PerfTaskBrief(BaseModel):
     project_id: int
     name: str
     description: str
+    release_tag: str = ""
     case_id: int | None
     case_name: str | None = None
     case_type: str | None = None
@@ -91,7 +118,17 @@ class RunPerfRequest(BaseModel):
     """启动压测。authorization_confirmed 必须为 true，服务端强制校验。"""
 
     env_id: int | None = Field(None, description="覆盖任务绑定的环境")
+    release_tag: str | None = Field(
+        None,
+        max_length=RELEASE_TAG_MAX,
+        description="覆盖任务上的版本标注；不传则用任务的，显式传空串表示本次未标注",
+    )
     authorization_confirmed: bool = Field(False, description="确认已获得对该系统的压测授权")
+
+    @field_validator("release_tag", mode="before")
+    @classmethod
+    def _clean_release_tag(cls, value):
+        return _strip_release_tag(value)
 
 
 class PerfRunAccepted(BaseModel):
@@ -125,6 +162,7 @@ class PerfRunBrief(BaseModel):
     project_id: int
     task_id: int | None
     task_name: str
+    release_tag: str = ""
     case_id: int | None
     case_name: str
     env_name: str
@@ -156,6 +194,58 @@ class PerfRunOut(PerfRunBrief):
     authorized_by: str
     authorized_at: datetime | None
     last_heartbeat_at: datetime | None
+
+
+class PerfCompareSide(BaseModel):
+    """对比的一侧：负载参数 + 聚合指标，全部取自该次运行自己的快照。"""
+
+    run_id: int
+    task_id: int | None
+    task_name: str
+    case_id: int | None
+    case_name: str
+    env_id: int | None
+    env_name: str
+    release_tag: str = ""
+    status: str
+    load_mode: str
+    concurrency: int
+    total_requests: int
+    duration_seconds: int
+    duration_ms: int
+    started_at: datetime | None
+    finished_at: datetime | None
+    counts: dict = Field(default_factory=dict)
+    latency_ms: dict = Field(default_factory=dict)
+    tps: dict = Field(default_factory=dict)
+    errors: dict = Field(default_factory=dict)
+    error_rate: float | None = None
+
+
+class PerfCompareDelta(BaseModel):
+    """右（较新）相对左（较早）的变化百分比。
+
+    `None` 表示左侧没有可用基数（为 0 或缺失），此时不编造百分比 ——
+    0 → 5 的「增长 500%」比「—」更容易误导人。
+    """
+
+    total_pct: float | None = None
+    failed_pct: float | None = None
+    error_rate_pct: float | None = None
+    tps_pct: float | None = None
+    avg_pct: float | None = None
+    p50_pct: float | None = None
+    p90_pct: float | None = None
+    p95_pct: float | None = None
+    p99_pct: float | None = None
+
+
+class PerfRunCompare(BaseModel):
+    left: PerfCompareSide
+    right: PerfCompareSide
+    delta: PerfCompareDelta
+    # 不阻断对比的差异（用例不同 / 环境不同），不是错误
+    warning: str | None = None
 
 
 class PerfRunProgress(BaseModel):

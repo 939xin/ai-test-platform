@@ -43,6 +43,8 @@ const submitting = ref(false)
 const form = reactive({
   name: '',
   description: '',
+  // 发布版本标注：可留空（空串 = 未标注）。运行时会被快照进 perf_run
+  release_tag: '',
   case_id: null,
   env_id: null,
   load_mode: 'count',
@@ -69,6 +71,7 @@ function resetForm() {
   Object.assign(form, {
     name: '',
     description: '',
+    release_tag: '',
     case_id: null,
     env_id: null,
     load_mode: 'count',
@@ -123,6 +126,7 @@ function pickFields(task) {
   return {
     name: task.name,
     description: task.description,
+    release_tag: task.release_tag || '',
     case_id: task.case_id,
     env_id: task.env_id,
     load_mode: task.load_mode,
@@ -210,6 +214,7 @@ async function submit() {
     const payload = {
       name: form.name,
       description: form.description,
+      release_tag: form.release_tag.trim(),
       case_id: form.case_id,
       env_id: form.env_id,
       load_mode: form.load_mode,
@@ -246,6 +251,18 @@ watch(visible, (open) => {
       </el-form-item>
       <el-form-item label="描述">
         <el-input v-model="form.description" type="textarea" :rows="2" placeholder="选填" />
+      </el-form-item>
+
+      <el-form-item label="版本标注">
+        <el-input
+          v-model="form.release_tag"
+          maxlength="64"
+          show-word-limit
+          clearable
+          placeholder="如 v2.2.0 / 2026-10-22 上线批，可留空"
+          style="width: 320px"
+        />
+        <span class="hint inline">运行时快照到运行记录；留空表示未标注</span>
       </el-form-item>
 
       <el-form-item label="接口用例" required>
